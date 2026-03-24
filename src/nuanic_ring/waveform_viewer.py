@@ -12,6 +12,7 @@ Notes:
 """
 
 import asyncio
+import math
 import struct
 import threading
 import time
@@ -59,6 +60,10 @@ class WaveformState:
         self.live_dna_word1 = deque(maxlen=history_points)
         self.live_dna_word2 = deque(maxlen=history_points)
         self.live_dna_word3 = deque(maxlen=history_points)
+
+        self.imu_packets = 0
+        self.imu_index = deque(maxlen=history_points)
+        self.imu_intensity = deque(maxlen=history_points)
 
 
 class NuanicWaveformViewer:
@@ -117,6 +122,24 @@ class NuanicWaveformViewer:
             self.state.live_dna_word2.append(float(word2))
             self.state.live_dna_word3.append(float(word3))
 
+    def _imu_callback(self, sender, data):
+        if len(data) != 92:
+            return
+        
+        offset = 8
+        mags = []
+        for _ in range(14):
+            x, y, z = struct.unpack_from("<hhh", bytes(data), offset)
+            mags.append(math.sqrt((x * x) + (y * y) + (z * z)))
+            offset += 6
+            
+        intensity = sum(mags) / max(1, len(mags))
+        
+        with self.state.lock:
+            self.state.imu_packets += 1
+            self.state.imu_index.append(self.state.imu_packets)
+            self.state.imu_intensity.append(intensity)
+
 
 def _epoch_candidate_text(raw_value: int, current_utc: datetime) -> str:
     """Heuristic check whether raw_value could be unix sec/ms/us timestamp."""
@@ -154,10 +177,12 @@ async def _connect_and_subscribe(self) -> bool:
         return False
 
     live_dna_ok = await self.connector.subscribe_to_imu(self._live_dna_callback)
+    imu_ok = await self.connector.subscribe_to_stress(self._imu_callback)
     live_eda_ok = await self.connector.subscribe_to_live_eda(self._live_eda_callback)
 
-    if not (live_dna_ok and live_eda_ok):
+    if not live_dna_ok:
         await self.connector.unsubscribe_from_imu()
+        await self.connector.unsubscribe_from_stress()
         await self.connector.unsubscribe_from_live_eda()
         await self.connector.disconnect()
         return False
@@ -177,6 +202,7 @@ async def _run_until_stopped(self):
 async def _stop(self):
     self._running = False
     await self.connector.unsubscribe_from_imu()
+    await self.connector.unsubscribe_from_stress()
     await self.connector.unsubscribe_from_live_eda()
     await self.connector.disconnect()
 
@@ -195,7 +221,11 @@ def _autoscale_axis(
 
     y_smooth = smooth_data(y_data, smooth_window)
     line.set_data(x_data, y_smooth)
-    axis.set_xlim(min(x_data), max(x_data))
+    x_min, x_max = min(x_data), max(x_data)
+    if x_min == x_max:
+        axis.set_xlim(x_min - 1, x_max + 1)
+    else:
+        axis.set_xlim(x_min, x_max)
 
     ymin = min(y_smooth)
     ymax = max(y_smooth)
@@ -213,34 +243,44 @@ async def run_plot_async(
     smooth_window: int = 1,
 ):
     """Run matplotlib UI while asyncio keeps BLE callbacks flowing."""
+    plt.style.use("dark_background")
     plt.ioff()  # Turn off interactive mode to avoid event loop conflicts
 
-    fig, axes = plt.subplots(3, 2, figsize=(13, 9), sharex=False)
-    fig.suptitle("Nuanic Ring: 42dc LIVE_EDA + d306 LIVE_DNA (candidate semantics)")
+    fig, axes = plt.subplots(2, 2, figsize=(13, 9), sharex=False, facecolor="#121212")
+    fig.suptitle(
+        "Nuanic Ring: d306 LIVE_DNA Telemetry",
+        color="white",
+        fontsize=14,
+        fontweight="bold",
+    )
+    # Set plot backgrounds to a slightly lighter dark grey
+    for ax_array in axes:
+        for ax in ax_array:
+            ax.set_facecolor("#1e1e1e")
 
-    ax_eda_signal = axes[0][0]
-    ax_eda_ohm = axes[0][1]
-    ax_w0 = axes[1][0]
-    ax_w1 = axes[1][1]
-    ax_w2 = axes[2][0]
-    ax_w3 = axes[2][1]
+    ax_w2 = axes[0][0]
+    ax_w3 = axes[0][1]
+    ax_imu = axes[1][0]
+    ax_w0 = axes[1][1]
 
-    (line_eda_signal,) = ax_eda_signal.plot([], [], lw=1.4, color="tab:blue")
-    (line_eda_ohm,) = ax_eda_ohm.plot([], [], lw=1.4, color="tab:green")
-    (line_w1,) = ax_w1.plot([], [], lw=1.2, color="tab:red")
-    (line_w2,) = ax_w2.plot([], [], lw=1.2, color="tab:purple")
-    (line_w3,) = ax_w3.plot([], [], lw=1.2, color="tab:brown")
+    (line_w2,) = ax_w2.plot([], [], lw=1.8, color="#00ffff")               # Cyan (EDA)
+    (line_w3,) = ax_w3.plot([], [], lw=1.8, color="#39ff14")               # Neon Green (Stress)
+    (line_imu,) = ax_imu.plot([], [], lw=1.5, color="#ff00ff")             # Hot Pink (IMU)
 
-    ax_eda_signal.set_title("42dcb71b LIVE_EDA signal (HQI ohm or int16 mean-abs)")
-    ax_eda_ohm.set_title("42dcb71b LIVE_EDA ohm (HQI 14-byte only)")
-    ax_w0.set_title("d306262b word0 timestamp/clock diagnostics")
-    ax_w1.set_title("d306262b word1 (session/context candidate)")
-    ax_w2.set_title("d306262b word2 (signal candidate)")
-    ax_w3.set_title("d306262b word3 (DNE/MM-like index candidate)")
+    ax_w2.set_title("d306262b word2 (LIVE EDA Signal)", color="#00ffff")
+    ax_w3.set_title("d306262b word3 (DNE/Stress Index)", color="#39ff14")
+    ax_imu.set_title("468f2717 IMU Motion Intensity", color="#ff00ff")
+    ax_w0.set_title("d306262b word0 (Timestamp Diagnostics)", color="lightgray")
 
-    for axis in [ax_eda_signal, ax_eda_ohm, ax_w1, ax_w2, ax_w3]:
-        axis.set_xlabel("Packet index")
-        axis.set_ylabel("Value")
+    for axis in [ax_w2, ax_w3, ax_imu]:
+        axis.set_xlabel("Packet index", color="gray", fontsize=9)
+        axis.set_ylabel("Value", color="gray", fontsize=9)
+        axis.grid(True, linestyle="--", alpha=0.2, color="lightgray")
+        axis.spines["top"].set_visible(False)
+        axis.spines["right"].set_visible(False)
+        axis.spines["left"].set_color("#444444")
+        axis.spines["bottom"].set_color("#444444")
+        axis.tick_params(colors="silver", labelsize=8)
 
     ax_w0.axis("off")
     word0_text = ax_w0.text(
@@ -252,9 +292,12 @@ async def run_plot_async(
         ha="left",
         fontsize=10,
         family="monospace",
+        color="lightgray",
     )
 
-    status_text = fig.text(0.01, 0.975, "Waiting for packets...", fontsize=10)
+    status_text = fig.text(
+        0.01, 0.975, "Waiting for packets...", fontsize=10, color="white"
+    )
     max_points = max(200, window_seconds * 100)
 
     plt.tight_layout()
@@ -268,36 +311,22 @@ async def run_plot_async(
             if not plt.fignum_exists(fig.number):
                 break
             with viewer.state.lock:
-                eda_signal_x = list(viewer.state.live_eda_signal_index)[-max_points:]
-                eda_signal_y = list(viewer.state.live_eda_signal_wave)[-max_points:]
-
-                eda_ohm_x = list(viewer.state.live_eda_ohm_index)[-max_points:]
-                eda_ohm_y = list(viewer.state.live_eda_ohm_wave)[-max_points:]
-
                 dna_x = list(viewer.state.live_dna_index)[-max_points:]
                 dna_t = list(viewer.state.live_dna_pc_seconds)[-max_points:]
                 w0 = list(viewer.state.live_dna_word0)[-max_points:]
                 w1 = list(viewer.state.live_dna_word1)[-max_points:]
                 w2 = list(viewer.state.live_dna_word2)[-max_points:]
                 w3 = list(viewer.state.live_dna_word3)[-max_points:]
+                
+                imu_x = list(viewer.state.imu_index)[-max_points:]
+                imu_y = list(viewer.state.imu_intensity)[-max_points:]
 
-                live_eda_packets = viewer.state.live_eda_packets
                 live_dna_packets = viewer.state.live_dna_packets
-                latest_eda_mode = viewer.state.latest_eda_mode
+                imu_packets = viewer.state.imu_packets
 
-            _autoscale_axis(
-                ax_eda_signal,
-                line_eda_signal,
-                eda_signal_x,
-                eda_signal_y,
-                smooth_window,
-            )
-            _autoscale_axis(
-                ax_eda_ohm, line_eda_ohm, eda_ohm_x, eda_ohm_y, smooth_window
-            )
-            _autoscale_axis(ax_w1, line_w1, dna_x, w1, smooth_window)
             _autoscale_axis(ax_w2, line_w2, dna_x, w2, smooth_window)
             _autoscale_axis(ax_w3, line_w3, dna_x, w3, smooth_window)
+            _autoscale_axis(ax_imu, line_imu, imu_x, imu_y, smooth_window)
 
             latest_w0 = int(w0[-1]) if w0 else None
             first_w0 = int(w0[0]) if w0 else None
@@ -328,6 +357,7 @@ async def run_plot_async(
             latest_w3_text = (
                 f"{latest_w3} (0x{latest_w3:08X})" if latest_w3 is not None else "n/a"
             )
+            latest_imu = f"{imu_y[-1]:.1f}" if imu_y else "n/a"
 
             clock_mode = "n/a"
             monotonic_ratio_text = "n/a"
@@ -380,12 +410,12 @@ async def run_plot_async(
             )
 
             status_text.set_text(
-                f"LIVE_EDA packets: {live_eda_packets} (mode: {latest_eda_mode}) | "
                 f"LIVE_DNA packets: {live_dna_packets} | "
+                f"IMU packets: {imu_packets} | "
                 f"w0 mode: {clock_mode} | "
-                f"w1 latest: {latest_w1}, zero-rate: {w1_ratio_text} | "
-                f"w2 latest: {latest_w2_text} | "
-                f"w3 latest: {latest_w3_text}"
+                f"IMU latest intensity: {latest_imu} | "
+                f"w2 (EDA) latest: {latest_w2_text} | "
+                f"w3 (DNE) latest: {latest_w3_text}"
             )
 
             fig.canvas.draw_idle()
@@ -408,14 +438,14 @@ async def run_waveform_viewer(
     refresh_ms: int = 120,
     smooth_window: int = 1,
 ) -> int:
-    """Run standalone Juho-like live plotter."""
+    """Run standalone live telemetry plotter."""
     viewer = NuanicWaveformViewer(ring_addr=ring_addr)
 
     if not await viewer.connect_and_subscribe():
-        print("[FAIL] Could not connect and subscribe to LIVE_EDA/LIVE_DNA streams")
+        print("[FAIL] Could not connect and subscribe to high-frequency telemetry streams")
         return 1
 
-    print("[OK] Connected. Opening Juho-like live plot window...")
+    print("[OK] Connected. Opening live telemetry window...")
     if smooth_window > 1:
         print(f"[SMOOTH] Applying {smooth_window}-point moving average filter")
 
