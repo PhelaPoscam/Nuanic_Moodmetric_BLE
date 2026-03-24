@@ -119,11 +119,6 @@ What one run does:
 - Shows live monitoring output
 - Writes CSV logs in `data/nuanic_logs/`
 
-## 2.3 Logging-focused run
-```bash
-python scripts/ring_logger_cli.py --duration 300
-```
-
 ## 2.4 CSV analysis run
 ```bash
 python scripts/ring_analyzer_cli.py data/nuanic_logs/nuanic_stress_YYYY-MM-DD_HH-MM-SS.csv
@@ -182,20 +177,6 @@ Options:
 - `--ring-addr ADDR`
 - `--list-rings`
 
-## 3.2 `nuanic_logger_cli.py` (lightweight logging)
-```bash
-python scripts/ring_logger_cli.py
-python scripts/ring_logger_cli.py --duration 300
-python scripts/ring_logger_cli.py --list-rings
-python scripts/ring_logger_cli.py --ring-addr 58:A3:D0:95:DF:2D --duration 60
-```
-
-Options:
-- `--duration SECONDS`
-- `--log-dir PATH`
-- `--ring-addr ADDR`
-- `--list-rings`
-
 ## 3.3 `nuanic_analyzer_cli.py` (file analysis)
 ```bash
 python scripts/ring_analyzer_cli.py data/nuanic_logs/nuanic_stress_2026-03-05_15-45-19.csv
@@ -220,9 +201,7 @@ Without `--ring-addr`:
 `src/awe_polar/nuanic_ring/`
 - `connector.py`: BLE discovery and connection
 - `monitor.py`: multi-stream monitoring
-- `logger.py`: data logging
 - `data_analysis.py`: analysis utilities (project-dependent)
-- `eda_analyzer.py`: EDA-specific analysis
 
 ## 4.2 Connector example
 ```python
@@ -241,23 +220,6 @@ from awe_polar.ring_device import NuanicMonitor
 monitor = NuanicMonitor()
 await monitor.start_monitoring()
 stress = monitor.get_current_stress()  # 0-100%
-```
-
-## 4.4 Logger example
-```python
-from awe_polar.ring_device import NuanicDataLogger
-
-logger = NuanicDataLogger()
-await logger.start_logging(duration_seconds=300)
-```
-
-## 4.5 EDA analyzer example
-```python
-from awe_polar.ring_device.eda_analyzer import NuanicEDAAnalyzer
-
-analyzer = NuanicEDAAnalyzer()
-stats = analyzer.add_reading(eda_value)
-print(analyzer.get_interpretation(stats))
 ```
 
 ## 4.6 MAC dynamics check
@@ -481,7 +443,7 @@ When these conflicts appear in legacy logs/docs:
   - Orientation can make one axis appear stable.
   - Validate under varied motion.
 - EDA all zeros:
-  - Confirm script path (monitor vs minimal logger).
+  - Confirm script path (ensure using monitor).
   - Confirm packet source characteristic(s).
   - Capture diagnostics before changing parser assumptions.
 
@@ -491,7 +453,6 @@ Historical docs mention moved or archived scripts (`scripts/ble/archive/`) and r
 
 Current known script set (from present tree):
 - `scripts/ring_monitor_cli.py`
-- `scripts/ring_logger_cli.py`
 - `scripts/ring_analyzer_cli.py`
 - `scripts/discover_ring_services.py` (unified diagnostics)
 - `scripts/analysis/analyze_nuanic_stream.py`
@@ -551,9 +512,6 @@ python scripts/ring_monitor_cli.py --duration 60 --no-log
 
 # Live waveform visualization (stress payload + raw EDA)
 python scripts/ring_monitor_cli.py --waveform --window-seconds 10
-
-# Lightweight logging
-python scripts/ring_logger_cli.py --duration 300
 
 # Analyze a captured session
 python scripts/ring_analyzer_cli.py data/nuanic_logs/nuanic_stress_YYYY-MM-DD_HH-MM-SS.csv
