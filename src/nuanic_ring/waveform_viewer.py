@@ -263,9 +263,9 @@ async def run_plot_async(
     ax_imu = axes[1][0]
     ax_w0 = axes[1][1]
 
-    (line_w2,) = ax_w2.plot([], [], lw=1.8, color="#00ffff")               # Cyan (EDA)
-    (line_w3,) = ax_w3.plot([], [], lw=1.8, color="#39ff14")               # Neon Green (Stress)
-    (line_imu,) = ax_imu.plot([], [], lw=1.5, color="#ff00ff")             # Hot Pink (IMU)
+    (line_w2,) = ax_w2.plot([], [], lw=1.8, color="#00ffff")  # Cyan (EDA)
+    (line_w3,) = ax_w3.plot([], [], lw=1.8, color="#39ff14")  # Neon Green (Stress)
+    (line_imu,) = ax_imu.plot([], [], lw=1.5, color="#ff00ff")  # Hot Pink (IMU)
 
     ax_w2.set_title("d306262b word2 (LIVE EDA Signal)", color="#00ffff")
     ax_w3.set_title("d306262b word3 (DNE/Stress Index)", color="#39ff14")
@@ -317,7 +317,7 @@ async def run_plot_async(
                 w1 = list(viewer.state.live_dna_word1)[-max_points:]
                 w2 = list(viewer.state.live_dna_word2)[-max_points:]
                 w3 = list(viewer.state.live_dna_word3)[-max_points:]
-                
+
                 imu_x = list(viewer.state.imu_index)[-max_points:]
                 imu_y = list(viewer.state.imu_intensity)[-max_points:]
 
@@ -442,7 +442,9 @@ async def run_waveform_viewer(
     viewer = NuanicWaveformViewer(ring_addr=ring_addr)
 
     if not await viewer.connect_and_subscribe():
-        print("[FAIL] Could not connect and subscribe to high-frequency telemetry streams")
+        print(
+            "[FAIL] Could not connect and subscribe to high-frequency telemetry streams"
+        )
         return 1
 
     print("[OK] Connected. Opening live telemetry window...")
