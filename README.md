@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-An independent, lightweight Python library for connecting, monitoring, and capturing raw electrodermal activity (EDA) and IMU waveforms from **Nuanic** and legacy **Moodmetric** BLE rings.
+A Python library for connecting, monitoring, and capturing raw electrodermal activity (EDA) and IMU waveforms from **Nuanic** and legacy **Moodmetric** BLE rings.
 
 ---
 
@@ -41,7 +41,7 @@ python scripts/ring_monitor_cli.py --waveform
 
 ## 📖 Deep-Dive Documentation
 
-Please read the reverse-engineering logs to understand how the payloads are structured, and what the BLE strings map to:
+Please read the extensive reverse-engineering logs to understand how the payloads are structured, and what the BLE strings map to:
 - **Hardware Reverse-Engineering (Nuanic & Moodmetric):** [Ring Reverse-Engineering Report](docs/ring_reverse_engineering_report.md)
 - **Ring Integration API & Master Guide:** [Ring Master Guide](docs/ring_master_guide.md)
 
