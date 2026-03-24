@@ -125,16 +125,16 @@ class NuanicWaveformViewer:
     def _imu_callback(self, sender, data):
         if len(data) != 92:
             return
-        
+
         offset = 8
         mags = []
         for _ in range(14):
             x, y, z = struct.unpack_from("<hhh", bytes(data), offset)
             mags.append(math.sqrt((x * x) + (y * y) + (z * z)))
             offset += 6
-            
+
         intensity = sum(mags) / max(1, len(mags))
-        
+
         with self.state.lock:
             self.state.imu_packets += 1
             self.state.imu_index.append(self.state.imu_packets)
