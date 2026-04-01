@@ -109,11 +109,3 @@ asyncio.run(run_sensor())
 
 - **Hardware Reverse-Engineering:** [Ring Reverse-Engineering Report](docs/ring_reverse_engineering_report.md)
 - **Ring Integration API & Master Guide:** [Ring Master Guide](docs/ring_master_guide.md)
-
----
-
-## 🔭 Future Research Directions
-
-1. **LSL (Lab Streaming Layer) Integration** — Broadcast EDA/Arousal to EEG/eye-tracking rigs for multi-modal research.
-2. **Motion Artifact Rejection** — Use high-frequency IMU data to mask EDA spikes caused by movement.
-3. **Cross-Ring Synchronization** — Connect two rings simultaneously to study bilateral electrodermal asymmetry.
