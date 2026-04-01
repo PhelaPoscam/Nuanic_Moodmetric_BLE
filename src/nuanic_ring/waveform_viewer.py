@@ -181,7 +181,9 @@ class NuanicWaveformViewer:
 
         live_dna_ok = await self.connector.subscribe_to_imu(self._live_dna_callback)
         imu_ok = await self.connector.subscribe_to_stress(self._imu_callback)
-        live_eda_ok = await self.connector.subscribe_to_live_eda(self._live_eda_callback)
+        live_eda_ok = await self.connector.subscribe_to_live_eda(
+            self._live_eda_callback
+        )
 
         if not live_dna_ok:
             await self.connector.unsubscribe_from_imu()
@@ -234,9 +236,6 @@ def _epoch_candidate_text(raw_value: int, current_utc: datetime) -> str:
     if not candidates:
         return "sec/ms/us: out-of-range"
     return " | ".join(candidates)
-
-
-
 
 
 def _autoscale_axis(
@@ -348,7 +347,7 @@ async def run_plot_async(
                 break
             with viewer.state.lock:
                 dna_x = list(viewer.state.live_dna_index)[-max_points:]
-                
+
                 imu_x = list(viewer.state.imu_index)[-max_points:]
                 imu_y = list(viewer.state.imu_intensity)[-max_points:]
 
