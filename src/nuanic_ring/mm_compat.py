@@ -148,7 +148,7 @@ class MMLikeScorer:
         self,
         tonic_value: float,
         now: datetime | None = None,
-        trigger_threshold: float = 1.0,
+        trigger_threshold: float = 0.02,
         min_event_gap_seconds: float = 3.0,
     ) -> tuple[float, float]:
         """Update internal SCR event detector from a tonic-like signal.

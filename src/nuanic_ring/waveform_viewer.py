@@ -23,6 +23,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .connector import NuanicConnector
+from .signal_processing import SignalConditioner
+from .mm_compat import MMLikeScorer, MMFeatures
+
+
+def convert_eda(raw_value: int):
+    """Convert raw EDA integer into resistance (kOhm) and conductance (uS)."""
+    ADC_MULTIPLIER = 1.0
+    resistance_kohm = (raw_value * ADC_MULTIPLIER) / 1000.0
+    conductance_us = (1000.0 / resistance_kohm) if resistance_kohm > 0 else 0.0
+    return resistance_kohm, conductance_us
 
 
 def smooth_data(data: list, window: int) -> list:
@@ -65,13 +75,20 @@ class WaveformState:
         self.imu_index = deque(maxlen=history_points)
         self.imu_intensity = deque(maxlen=history_points)
 
+        self.mm_arousal_wave = deque(maxlen=history_points)
+        self.mm_filtered_us_wave = deque(maxlen=history_points)
+        self.mm_calibration_remaining = 0.0
+        self.mm_calibrated = False
+
 
 class NuanicWaveformViewer:
     """Connects to ring and exposes LIVE_EDA/LIVE_DNA data for plotting."""
 
-    def __init__(self, ring_addr: str | None = None):
+    def __init__(self, ring_addr: str | None = None, calibration_seconds: int = 60):
         self.connector = NuanicConnector(target_address=ring_addr)
         self.state = WaveformState()
+        self.signal_conditioner = SignalConditioner()
+        self.scorer = MMLikeScorer(calibration_seconds=calibration_seconds)
         self._running = False
 
     def _live_eda_callback(self, sender, data):
@@ -111,6 +128,7 @@ class NuanicWaveformViewer:
             return
 
         word0, word1, word2, word3 = struct.unpack("<IIII", bytes(data))
+        _res, conductance_us = convert_eda(word2)
 
         with self.state.lock:
             self.state.live_dna_packets += 1
@@ -121,6 +139,23 @@ class NuanicWaveformViewer:
             self.state.live_dna_word1.append(float(word1))
             self.state.live_dna_word2.append(float(word2))
             self.state.live_dna_word3.append(float(word3))
+
+            # Process through Physiological Pipeline
+            filtered_us = self.signal_conditioner.process(conductance_us)
+            freq, amp = self.scorer.update_scr_features(tonic_value=filtered_us)
+            features = MMFeatures(
+                scr_frequency_per_min=freq,
+                scr_amplitude=amp,
+                scl_microsiemens=filtered_us,
+            )
+            score_state = self.scorer.update(features)
+
+            self.state.mm_arousal_wave.append(score_state["mm_like_1_to_100"])
+            self.state.mm_filtered_us_wave.append(filtered_us)
+            self.state.mm_calibration_remaining = score_state[
+                "calibration_seconds_remaining"
+            ]
+            self.state.mm_calibrated = score_state["calibrated"]
 
     def _imu_callback(self, sender, data):
         if len(data) != 92:
@@ -139,6 +174,38 @@ class NuanicWaveformViewer:
             self.state.imu_packets += 1
             self.state.imu_index.append(self.state.imu_packets)
             self.state.imu_intensity.append(intensity)
+
+    async def connect_and_subscribe(self) -> bool:
+        if not await self.connector.connect():
+            return False
+
+        live_dna_ok = await self.connector.subscribe_to_imu(self._live_dna_callback)
+        imu_ok = await self.connector.subscribe_to_stress(self._imu_callback)
+        live_eda_ok = await self.connector.subscribe_to_live_eda(self._live_eda_callback)
+
+        if not live_dna_ok:
+            await self.connector.unsubscribe_from_imu()
+            await self.connector.unsubscribe_from_stress()
+            await self.connector.unsubscribe_from_live_eda()
+            await self.connector.disconnect()
+            return False
+
+        self._running = True
+        return True
+
+    async def run_until_stopped(self):
+        try:
+            while self._running:
+                await asyncio.sleep(0.1)
+        finally:
+            await self.stop()
+
+    async def stop(self):
+        self._running = False
+        await self.connector.unsubscribe_from_imu()
+        await self.connector.unsubscribe_from_stress()
+        await self.connector.unsubscribe_from_live_eda()
+        await self.connector.disconnect()
 
 
 def _epoch_candidate_text(raw_value: int, current_utc: datetime) -> str:
@@ -169,48 +236,7 @@ def _epoch_candidate_text(raw_value: int, current_utc: datetime) -> str:
     return " | ".join(candidates)
 
 
-# Methods for NuanicWaveformViewer are added below via assignment
 
-
-async def _connect_and_subscribe(self) -> bool:
-    if not await self.connector.connect():
-        return False
-
-    live_dna_ok = await self.connector.subscribe_to_imu(self._live_dna_callback)
-    imu_ok = await self.connector.subscribe_to_stress(self._imu_callback)
-    live_eda_ok = await self.connector.subscribe_to_live_eda(self._live_eda_callback)
-
-    if not live_dna_ok:
-        await self.connector.unsubscribe_from_imu()
-        await self.connector.unsubscribe_from_stress()
-        await self.connector.unsubscribe_from_live_eda()
-        await self.connector.disconnect()
-        return False
-
-    self._running = True
-    return True
-
-
-async def _run_until_stopped(self):
-    try:
-        while self._running:
-            await asyncio.sleep(0.1)
-    finally:
-        await self.stop()
-
-
-async def _stop(self):
-    self._running = False
-    await self.connector.unsubscribe_from_imu()
-    await self.connector.unsubscribe_from_stress()
-    await self.connector.unsubscribe_from_live_eda()
-    await self.connector.disconnect()
-
-
-# Assign methods to NuanicWaveformViewer class
-NuanicWaveformViewer.connect_and_subscribe = _connect_and_subscribe
-NuanicWaveformViewer.run_until_stopped = _run_until_stopped
-NuanicWaveformViewer.stop = _stop
 
 
 def _autoscale_axis(
@@ -230,9 +256,14 @@ def _autoscale_axis(
     ymin = min(y_smooth)
     ymax = max(y_smooth)
     if ymin == ymax:
-        pad = max(1.0, abs(float(ymin)) * 0.02)
+        # Use a very small pad if we're dealing with uS (usually < 10)
+        # but a larger one for scores or integers.
+        if abs(ymin) < 100:
+            pad = max(0.001, abs(float(ymin)) * 0.01)
+        else:
+            pad = max(1.0, abs(float(ymin)) * 0.01)
     else:
-        pad = max(1.0, (ymax - ymin) * 0.1)
+        pad = max(0.0001, (ymax - ymin) * 0.1)
     axis.set_ylim(ymin - pad, ymax + pad)
 
 
@@ -246,33 +277,38 @@ async def run_plot_async(
     plt.style.use("dark_background")
     plt.ioff()  # Turn off interactive mode to avoid event loop conflicts
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9), sharex=False, facecolor="#121212")
+    fig, axes = plt.subplots(3, 2, figsize=(13, 12), sharex=False, facecolor="#121212")
     fig.suptitle(
-        "Nuanic Ring: d306 LIVE_DNA Telemetry",
+        "Nuanic Ring: Physiological Telemetry",
         color="white",
-        fontsize=14,
+        fontsize=16,
         fontweight="bold",
     )
-    # Set plot backgrounds to a slightly lighter dark grey
+    # Set plot backgrounds
     for ax_array in axes:
         for ax in ax_array:
             ax.set_facecolor("#1e1e1e")
 
-    ax_w2 = axes[0][0]
-    ax_w3 = axes[0][1]
-    ax_imu = axes[1][0]
-    ax_w0 = axes[1][1]
+    ax_raw = axes[0][0]
+    ax_eda = axes[0][1]
+    ax_arousal = axes[1][0]
+    ax_imu = axes[1][1]
+    ax_summary = axes[2][0]
+    ax_empty = axes[2][1]
+    ax_empty.axis("off")
 
-    (line_w2,) = ax_w2.plot([], [], lw=1.8, color="#00ffff")  # Cyan (EDA)
-    (line_w3,) = ax_w3.plot([], [], lw=1.8, color="#39ff14")  # Neon Green (Stress)
+    (line_raw,) = ax_raw.plot([], [], lw=1.2, color="#BBBBBB")  # Grey (Raw)
+    (line_eda,) = ax_eda.plot([], [], lw=1.8, color="#00ffff")  # Cyan (Filtered)
+    (line_arousal,) = ax_arousal.plot([], [], lw=1.8, color="#FFD700")  # Gold (Arousal)
     (line_imu,) = ax_imu.plot([], [], lw=1.5, color="#ff00ff")  # Hot Pink (IMU)
 
-    ax_w2.set_title("d306262b word2 (LIVE EDA Signal)", color="#00ffff")
-    ax_w3.set_title("d306262b word3 (DNE/Stress Index)", color="#39ff14")
-    ax_imu.set_title("468f2717 IMU Motion Intensity", color="#ff00ff")
-    ax_w0.set_title("d306262b word0 (Timestamp Diagnostics)", color="lightgray")
+    ax_raw.set_title("Raw EDA (ADC Count)", color="#BBBBBB")
+    ax_eda.set_title("Filtered Conductance (uS)", color="#00ffff")
+    ax_arousal.set_title("Moodmetric Arousal Score (1-100)", color="#FFD700")
+    ax_imu.set_title("IMU Motion Intensity", color="#ff00ff")
+    ax_summary.set_title("Physiological Summary", color="lightgray")
 
-    for axis in [ax_w2, ax_w3, ax_imu]:
+    for axis in [ax_raw, ax_eda, ax_arousal, ax_imu]:
         axis.set_xlabel("Packet index", color="gray", fontsize=9)
         axis.set_ylabel("Value", color="gray", fontsize=9)
         axis.grid(True, linestyle="--", alpha=0.2, color="lightgray")
@@ -282,15 +318,15 @@ async def run_plot_async(
         axis.spines["bottom"].set_color("#444444")
         axis.tick_params(colors="silver", labelsize=8)
 
-    ax_w0.axis("off")
-    word0_text = ax_w0.text(
+    ax_summary.axis("off")
+    summary_text = ax_summary.text(
         0.01,
         0.98,
-        "waiting for d306 packets...",
-        transform=ax_w0.transAxes,
+        "Initializing scoring pipeline...",
+        transform=ax_summary.transAxes,
         va="top",
         ha="left",
-        fontsize=10,
+        fontsize=12,
         family="monospace",
         color="lightgray",
     )
@@ -312,110 +348,48 @@ async def run_plot_async(
                 break
             with viewer.state.lock:
                 dna_x = list(viewer.state.live_dna_index)[-max_points:]
-                dna_t = list(viewer.state.live_dna_pc_seconds)[-max_points:]
-                w0 = list(viewer.state.live_dna_word0)[-max_points:]
-                w1 = list(viewer.state.live_dna_word1)[-max_points:]
-                w2 = list(viewer.state.live_dna_word2)[-max_points:]
-                w3 = list(viewer.state.live_dna_word3)[-max_points:]
-
+                
                 imu_x = list(viewer.state.imu_index)[-max_points:]
                 imu_y = list(viewer.state.imu_intensity)[-max_points:]
 
+                eda_y = list(viewer.state.mm_filtered_us_wave)[-max_points:]
+                arousal_y = list(viewer.state.mm_arousal_wave)[-max_points:]
+
+                w2_raw = list(viewer.state.live_dna_word2)[-max_points:]
+
                 live_dna_packets = viewer.state.live_dna_packets
                 imu_packets = viewer.state.imu_packets
+                cal_remaining = viewer.state.mm_calibration_remaining
+                calibrated = viewer.state.mm_calibrated
 
-            _autoscale_axis(ax_w2, line_w2, dna_x, w2, smooth_window)
-            _autoscale_axis(ax_w3, line_w3, dna_x, w3, smooth_window)
+            _autoscale_axis(ax_raw, line_raw, dna_x, w2_raw, smooth_window)
+            _autoscale_axis(ax_eda, line_eda, dna_x, eda_y, smooth_window)
+            _autoscale_axis(ax_arousal, line_arousal, dna_x, arousal_y, smooth_window)
             _autoscale_axis(ax_imu, line_imu, imu_x, imu_y, smooth_window)
 
-            latest_w0 = int(w0[-1]) if w0 else None
-            first_w0 = int(w0[0]) if w0 else None
-            prev_w0 = int(w0[-2]) if len(w0) >= 2 else None
-            step_w0 = (
-                (latest_w0 - prev_w0)
-                if latest_w0 is not None and prev_w0 is not None
-                else None
-            )
-            rel_w0 = (
-                (latest_w0 - first_w0)
-                if latest_w0 is not None and first_w0 is not None
-                else None
+            latest_eda_us = eda_y[-1] if eda_y else 0.0
+            latest_arousal = arousal_y[-1] if arousal_y else 0.0
+            latest_imu_val = imu_y[-1] if imu_y else 0.0
+
+            cal_status = (
+                f"CALIBRATING ({cal_remaining:.0f}s left)"
+                if not calibrated
+                else "CALIBRATED (Active)"
             )
 
-            latest_w1 = int(w1[-1]) if w1 else None
-            latest_w2 = int(w2[-1]) if w2 else None
-            latest_w3 = int(w3[-1]) if w3 else None
-            w1_zero_ratio = (
-                (sum(1 for value in w1 if int(value) == 0) / len(w1)) if w1 else None
-            )
-            w1_ratio_text = (
-                f"{(w1_zero_ratio * 100):.1f}%" if w1_zero_ratio is not None else "n/a"
-            )
-            latest_w2_text = (
-                f"{latest_w2} (0x{latest_w2:08X})" if latest_w2 is not None else "n/a"
-            )
-            latest_w3_text = (
-                f"{latest_w3} (0x{latest_w3:08X})" if latest_w3 is not None else "n/a"
-            )
-            latest_imu = f"{imu_y[-1]:.1f}" if imu_y else "n/a"
-
-            clock_mode = "n/a"
-            monotonic_ratio_text = "n/a"
-            if len(w0) >= 3:
-                monotonic_steps = sum(
-                    1 for i in range(1, len(w0)) if int(w0[i]) >= int(w0[i - 1])
-                )
-                total_steps = len(w0) - 1
-                monotonic_ratio = monotonic_steps / max(1, total_steps)
-                monotonic_ratio_text = f"{(monotonic_ratio * 100):.1f}%"
-                monotonic = monotonic_ratio >= 0.99
-                clock_mode = (
-                    "monotonic counter/clock"
-                    if monotonic
-                    else "non-monotonic (not pure counter)"
-                )
-
-            tick_rate_text = "n/a"
-            if len(w0) >= 5 and len(dna_t) == len(w0):
-                t0 = dna_t[0]
-                x = np.array([t - t0 for t in dna_t], dtype=float)
-                y = np.array(w0, dtype=float)
-                if np.ptp(x) > 0:
-                    slope, _intercept = np.polyfit(x, y, 1)
-                    tick_rate_text = f"{slope:.3f} ticks/s"
-
-            epoch_hint_text = "n/a"
-            if latest_w0 is not None:
-                epoch_hint_text = _epoch_candidate_text(
-                    latest_w0,
-                    datetime.now(timezone.utc),
-                )
-
-            latest_w0_text = (
-                f"{latest_w0} (0x{latest_w0:08X})" if latest_w0 is not None else "n/a"
-            )
-            step_w0_text = str(step_w0) if step_w0 is not None else "n/a"
-            rel_w0_text = str(rel_w0) if rel_w0 is not None else "n/a"
-
-            word0_text.set_text(
-                "word0 diagnostics\n"
-                f"latest: {latest_w0_text}\n"
-                f"step (latest-prev): {step_w0_text}\n"
-                f"relative (latest-first): {rel_w0_text}\n"
-                f"mode hint: {clock_mode}\n"
-                f"monotonicity: {monotonic_ratio_text}\n"
-                f"estimated tick rate: {tick_rate_text}\n"
-                f"epoch plausibility: {epoch_hint_text}\n"
-                "note: if sec/ms/us all say 'no', this is likely device-local time"
+            summary_text.set_text(
+                "Nuance Physiological Summary\n"
+                "----------------------------\n"
+                f"Status:    {cal_status}\n"
+                f"Arousal:   {latest_arousal:.1f}/100\n"
+                f"Conduct.:  {latest_eda_us:.4f} uS\n"
+                f"Motion:    {latest_imu_val:.1f} intensity\n\n"
+                f"D306 Pkts: {live_dna_packets}\n"
+                f"IMU Pkts:  {imu_packets}"
             )
 
             status_text.set_text(
-                f"LIVE_DNA packets: {live_dna_packets} | "
-                f"IMU packets: {imu_packets} | "
-                f"w0 mode: {clock_mode} | "
-                f"IMU latest intensity: {latest_imu} | "
-                f"w2 (EDA) latest: {latest_w2_text} | "
-                f"w3 (DNE) latest: {latest_w3_text}"
+                f"LIVE MONITOR | Arousal: {latest_arousal:.1f} | Calibrated: {calibrated}"
             )
 
             fig.canvas.draw_idle()
@@ -423,8 +397,8 @@ async def run_plot_async(
             # Use async sleep without matplotlib event processing
             await asyncio.sleep(refresh_ms / 1000.0)
 
-    except KeyboardInterrupt:
-        pass
+    except Exception as e:
+        print(f"[ERROR] Plotting loop crash: {e}")
     finally:
         try:
             plt.close(fig)
@@ -437,9 +411,12 @@ async def run_waveform_viewer(
     window_seconds: int = 10,
     refresh_ms: int = 120,
     smooth_window: int = 1,
+    calibration_seconds: int = 60,
 ) -> int:
     """Run standalone live telemetry plotter."""
-    viewer = NuanicWaveformViewer(ring_addr=ring_addr)
+    viewer = NuanicWaveformViewer(
+        ring_addr=ring_addr, calibration_seconds=calibration_seconds
+    )
 
     if not await viewer.connect_and_subscribe():
         print(

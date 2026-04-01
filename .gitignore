@@ -68,3 +68,13 @@ venv.bak/
 
 # MacOS
 .DS_Store
+
+# Project-specific: session data (physiological recordings - never commit)
+data/ring_logs/
+data/diagnostic_test/
+
+# Project-specific: temp/dev scripts and dump files
+temp_patch.py
+tests_output.txt
+architecture_audit_and_roadmap.md
+diagnostic_capture_test.py

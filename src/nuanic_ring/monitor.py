@@ -19,6 +19,8 @@ from .ring_profiles import (
     notify_uuids_for_profile,
 )
 from .moodmetric_parser import decode_moodmetric_payload, summarize_decoded_payload
+from .mm_compat import MMLikeScorer, MMFeatures
+from .signal_processing import SignalConditioner
 
 
 def convert_eda(raw_value: int):
@@ -38,7 +40,7 @@ class NuanicMonitor:
         imu_refresh_packets: int = 5,
         clear_console: bool = True,
         enable_logging: bool = True,
-        calibration_seconds: int = 120,
+        calibration_seconds: int = 60,
     ):
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
@@ -73,6 +75,11 @@ class NuanicMonitor:
         self.live_eda_count = 0
         self.state_count = 0
         self._detected_profile = UNKNOWN_PROFILE
+        self.signal_conditioner = SignalConditioner()
+        self.scorer = MMLikeScorer(calibration_seconds=calibration_seconds)
+        self.current_mm_arousal = 0.0
+        self.current_mm_calibrated = False
+        self.current_mm_calibration_remaining = float(calibration_seconds)
 
     def _parse_d306_packet(self, data):
         """Parse d306 16-byte frame (little-endian uint32 chunks)."""
@@ -168,6 +175,9 @@ class NuanicMonitor:
                     "data_type",
                     "EDA_Raw_Value",
                     "Stress_Index",
+                    "MM_Filtered_uS",
+                    "MM_Arousal_Score",
+                    "MM_Calibrated",
                     "Skin_Resistance_kOhm",
                     "Skin_Conductance_uS",
                     "D306_Clock",
@@ -207,6 +217,9 @@ class NuanicMonitor:
                             ts,
                             elapsed_ms,
                             f"MM_NOTIFY_{uuid[:8]}",
+                            "",
+                            "",
+                            "",
                             "",
                             "",
                             "",
@@ -309,6 +322,15 @@ class NuanicMonitor:
         eda_value = parsed["eda_value"]
         dne_stress_index = parsed["dne_stress_index"]
         resistance_kohm, conductance_us = convert_eda(eda_value)
+        
+        filtered_us = self.signal_conditioner.process(conductance_us)
+        freq, amp = self.scorer.update_scr_features(tonic_value=filtered_us)
+        features = MMFeatures(scr_frequency_per_min=freq, scr_amplitude=amp, scl_microsiemens=filtered_us)
+        score_state = self.scorer.update(features)
+        self.current_mm_arousal = score_state["mm_like_1_to_100"]
+        self.current_mm_calibrated = score_state["calibrated"]
+        self.current_mm_calibration_remaining = score_state["calibration_seconds_remaining"]
+        
         full_hex = data.hex()
 
         if self.enable_logging and self.log_file:
@@ -321,6 +343,9 @@ class NuanicMonitor:
                         "D306_EDA",
                         eda_value,
                         dne_stress_index,
+                        f"{filtered_us:.4f}",
+                        f"{self.current_mm_arousal:.2f}",
+                        "1" if self.current_mm_calibrated else "0",
                         f"{resistance_kohm:.4f}",
                         f"{conductance_us:.4f}",
                         clock,
@@ -396,6 +421,9 @@ class NuanicMonitor:
                         "",
                         "",
                         "",
+                        "",
+                        "",
+                        "",
                         state_code if state_code is not None else "",
                         raw_hex,
                         raw_hex,
@@ -431,6 +459,9 @@ class NuanicMonitor:
                         timestamp,
                         elapsed_ms,
                         "LIVE_EDA_42DC",
+                        "",
+                        "",
+                        "",
                         "",
                         "",
                         "",
@@ -487,6 +518,9 @@ class NuanicMonitor:
                         "",
                         "",
                         "",
+                        "",
+                        "",
+                        "",
                         parsed_batch["clock"],
                         parsed_batch["context"],
                         parsed_batch["first_x"],
@@ -519,13 +553,14 @@ class NuanicMonitor:
 
     def _update_display(self):
         if self.clear_console:
-            os.system("cls" if os.name == "nt" else "clear")
+            # Use ANSI escape codes instead of os.system to prevent TUI flicker
+            print("\033[2J\033[H", end="")
 
         elapsed = self._elapsed_seconds()
-        d306_hz = self.d306_count / elapsed
-        imu_batch_hz = self.imu_batch_count / elapsed
-        state_hz = self.state_count / elapsed
-        live_eda_hz = self.live_eda_count / elapsed
+        d306_hz = self.d306_count / elapsed if elapsed > 0 else 0
+        imu_batch_hz = self.imu_batch_count / elapsed if elapsed > 0 else 0
+        state_hz = self.state_count / elapsed if elapsed > 0 else 0
+        live_eda_hz = self.live_eda_count / elapsed if elapsed > 0 else 0
 
         print("=" * 110)
         print("NUANIC MONOLITHIC MONITOR")
@@ -542,10 +577,17 @@ class NuanicMonitor:
             "LIVE_EDA_UUID=42dcb71b... | STORAGE_UUID=7c3b82e7..."
         )
         print(f"D306 Context (latest): {self.current_d306_context}")
-        if isinstance(self.current_dne_stress_index, int):
-            print(f"DNE Stress Index (latest): {self.current_dne_stress_index}/100")
+        
+        if self.current_mm_calibration_remaining > 0:
+            calib_str = f"CALIBRATING ({self.current_mm_calibration_remaining:.0f}s left)"
         else:
-            print("DNE Stress Index (latest): unknown")
+            calib_str = f"Calibrated: {self.current_mm_calibrated}"
+
+        if isinstance(self.current_dne_stress_index, int):
+            print(f"DNE Stress Index (latest): {self.current_dne_stress_index}/100 | MM Arousal: {self.current_mm_arousal:.1f}/100 ({calib_str})")
+        else:
+            print(f"DNE Stress Index (latest): unknown | MM Arousal: {self.current_mm_arousal:.1f}/100 ({calib_str})")
+            
         if self.current_3c18_state_code is not None:
             print(
                 f"3C18 State (latest): {self.current_3c18_state_name} "
@@ -674,7 +716,7 @@ class NuanicMonitor:
         finally:
             await self.connector.disconnect()
 
-        elapsed = self._elapsed_seconds()
+        elapsed = max(0.001, self._elapsed_seconds())
         print("\n" + "=" * 80)
         print("SESSION COMPLETE")
         print("=" * 80)
