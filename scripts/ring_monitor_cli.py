@@ -67,8 +67,8 @@ Examples:
     parser.add_argument(
         "--calibration-seconds",
         type=int,
-        default=120,
-        help="MM-like index calibration period in seconds (default: 120)",
+        default=60,
+        help="MM-like index calibration period in seconds (default: 60)",
     )
     parser.add_argument(
         "--no-clear",
