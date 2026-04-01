@@ -519,8 +519,8 @@ class NuanicConnector:
                 confidence = "high"  # All scans found same address
             else:
                 confidence = (
-                    "high" if is_dynamic else "high"
-                )  # Clear pattern either way
+                    "high" if len(discovered_addresses) >= num_scans - 1 else "low"
+                )  # Require mostly successful scans for high confidence
 
             print(f"\n[RESULT]")
             print(f"  Unique addresses found: {len(unique_addresses)}")
