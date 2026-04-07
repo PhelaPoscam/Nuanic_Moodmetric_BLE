@@ -128,6 +128,24 @@ python scripts/ring_post_analysis_cli.py --log-dir data/ring_logs --latest 2
 
 ---
 
+## 🔬 Empirical Rate Findings (Dual-Ring)
+
+From repeated paired-ring sessions (same command pattern, two MACs), the
+current observed behavior is:
+
+1. **Stable in paired mode:** `target-hz 5` and `target-hz 10`
+2. **Unstable/inconclusive in paired mode:** `target-hz 15` and `target-hz 25`
+3. The D306 stream follows requested rates when stable; the 468F stream remains
+  near `~1 Hz` and should be treated as a separate low-rate channel.
+
+Recommended default for two-ring captures:
+
+```bash
+python scripts/ring_monitor_cli.py --ring-addrs <MAC1>,<MAC2> --target-hz 10 --rate-control yes --equalize-mode log-only
+```
+
+---
+
 ## 🛠️ Usage in Code
 
 ```python
