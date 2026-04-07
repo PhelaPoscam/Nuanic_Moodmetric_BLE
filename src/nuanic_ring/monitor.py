@@ -49,17 +49,13 @@ class RingDeviceState:
     imu_batch_count: int = 0
     state_count: int = 0
     live_eda_count: int = 0
-    d306_buffer: Deque[Dict[str, Any]] = field(
-        default_factory=lambda: deque(maxlen=10)
-    )
+    d306_buffer: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=10))
     imu_batch_buffer: Deque[Dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=5)
     )
 
     # Independent processing chain per ring
-    signal_conditioner: SignalConditioner = field(
-        default_factory=SignalConditioner
-    )
+    signal_conditioner: SignalConditioner = field(default_factory=SignalConditioner)
     scorer: MMLikeScorer = field(init=False)
 
     # Logging
@@ -77,21 +73,18 @@ class RingDeviceState:
     imu_observed_hz: float = 0.0
     last_d306_ts: Optional[datetime] = None
     last_imu_ts: Optional[datetime] = None
-    d306_intervals: Deque[float] = field(
-        default_factory=lambda: deque(maxlen=128)
-    )
-    imu_intervals: Deque[float] = field(
-        default_factory=lambda: deque(maxlen=128)
-    )
+    last_accepted_d306_ts: Optional[datetime] = None
+    last_accepted_imu_ts: Optional[datetime] = None
+    d306_intervals: Deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    imu_intervals: Deque[float] = field(default_factory=lambda: deque(maxlen=128))
     d306_would_drop: int = 0
     imu_would_drop: int = 0
     rate_control_status: str = "not-attempted"
     rate_control_detail: str = ""
+    heartbeat_tick: bool = False
 
     def __post_init__(self) -> None:
-        self.scorer = MMLikeScorer(
-            calibration_seconds=self.calibration_seconds
-        )
+        self.scorer = MMLikeScorer(calibration_seconds=self.calibration_seconds)
 
 
 class NuanicMonitor:
@@ -107,9 +100,11 @@ class NuanicMonitor:
         target_hz: Optional[float] = None,
         equalize_mode: str = "off",
         attempt_ring_rate_control: bool = False,
+        force_hz: bool = False,
     ):
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
+        self.force_hz = force_hz
         if self.enable_logging:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -117,7 +112,7 @@ class NuanicMonitor:
         self.imu_refresh_packets = max(1, imu_refresh_packets)
         self.clear_console = clear_console
         self.calibration_seconds = calibration_seconds
-        self.target_hz = float(target_hz) if target_hz else None
+        self.target_hz = target_hz
         self.equalize_mode = equalize_mode
         self.attempt_ring_rate_control = attempt_ring_rate_control
 
@@ -160,10 +155,7 @@ class NuanicMonitor:
             samples.append((x, y, z))
             offset += 6
 
-        magnitudes = [
-            math.sqrt((x * x) + (y * y) + (z * z))
-            for x, y, z in samples
-        ]
+        magnitudes = [math.sqrt((x * x) + (y * y) + (z * z)) for x, y, z in samples]
         motion_intensity = sum(magnitudes) / len(magnitudes)
 
         return {
@@ -235,9 +227,7 @@ class NuanicMonitor:
                 )
 
             state.log_queue = asyncio.Queue(maxsize=5000)
-            state.writer_task = asyncio.create_task(
-                self._csv_writer_loop(state)
-            )
+            state.writer_task = asyncio.create_task(self._csv_writer_loop(state))
 
         return state
 
@@ -303,9 +293,7 @@ class NuanicMonitor:
                 dt = (now - last).total_seconds()
                 if dt > 0:
                     state.d306_intervals.append(dt)
-                    mean_dt = sum(state.d306_intervals) / len(
-                        state.d306_intervals
-                    )
+                    mean_dt = sum(state.d306_intervals) / len(state.d306_intervals)
                     if mean_dt > 0:
                         state.d306_observed_hz = 1.0 / mean_dt
             state.last_d306_ts = now
@@ -330,16 +318,17 @@ class NuanicMonitor:
             return False
 
         target_dt = 1.0 / max(1e-6, self.target_hz)
-        intervals = (
-            state.d306_intervals
+        last_ts = (
+            state.last_accepted_d306_ts
             if stream_name == "d306"
-            else state.imu_intervals
+            else state.last_accepted_imu_ts
         )
-        if not intervals:
+        if last_ts is None:
             return False
 
-        latest_dt = intervals[-1]
-        should_drop = latest_dt < target_dt
+        current_dt = (datetime.now() - last_ts).total_seconds()
+        should_drop = current_dt < target_dt
+
         if should_drop:
             if stream_name == "d306":
                 state.d306_would_drop += 1
@@ -353,16 +342,8 @@ class NuanicMonitor:
         would_drop: bool,
     ) -> List[Any]:
         return [
-            (
-                f"{state.d306_observed_hz:.3f}"
-                if state.d306_observed_hz > 0
-                else ""
-            ),
-            (
-                f"{state.imu_observed_hz:.3f}"
-                if state.imu_observed_hz > 0
-                else ""
-            ),
+            (f"{state.d306_observed_hz:.3f}" if state.d306_observed_hz > 0 else ""),
+            (f"{state.imu_observed_hz:.3f}" if state.imu_observed_hz > 0 else ""),
             f"{self.target_hz:.2f}" if self.target_hz else "",
             state.rate_control_status,
             self.equalize_mode,
@@ -383,6 +364,11 @@ class NuanicMonitor:
             state.last_seen = now
             self._update_observed_hz(state, "d306", now)
             would_drop = self._equalize_decision(state, "d306")
+
+            if would_drop and self.equalize_mode == "enforce":
+                return
+
+            state.last_accepted_d306_ts = now
             state.d306_count += 1
 
             clock = parsed["clock"]
@@ -392,9 +378,7 @@ class NuanicMonitor:
 
             resistance_kohm, conductance_us = convert_eda(eda_value)
             filtered_us = state.signal_conditioner.process(conductance_us)
-            freq, amp = state.scorer.update_scr_features(
-                tonic_value=filtered_us
-            )
+            freq, amp = state.scorer.update_scr_features(tonic_value=filtered_us)
             score_state = state.scorer.update(
                 MMFeatures(
                     scr_frequency_per_min=freq,
@@ -416,28 +400,35 @@ class NuanicMonitor:
                 }
             )
 
-            row = self._base_row(state, "D306_EDA") + [
-                eda_value,
-                dne_stress_index,
-                f"{filtered_us:.4f}",
-                f"{state.arousal_score:.2f}",
-                "1" if score_state["calibrated"] else "0",
-                f"{resistance_kohm:.4f}",
-                f"{conductance_us:.4f}",
-                clock,
-                context,
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                data.hex(),
-                "",
-                "",
-            ] + self._row_rate_tail(state, would_drop)
+            row = (
+                self._base_row(state, "D306_EDA")
+                + [
+                    eda_value,
+                    dne_stress_index,
+                    f"{filtered_us:.4f}",
+                    f"{state.arousal_score:.2f}",
+                    "1" if score_state["calibrated"] else "0",
+                    f"{resistance_kohm:.4f}",
+                    f"{conductance_us:.4f}",
+                    clock,
+                    context,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    data.hex(),
+                    "",
+                    "",
+                ]
+                + self._row_rate_tail(state, would_drop)
+            )
             self._enqueue_log(state, row)
+
+            # Toggle the heartbeat for visual feedback
+            state.heartbeat_tick = not state.heartbeat_tick
 
         return _cb
 
@@ -455,6 +446,11 @@ class NuanicMonitor:
             state.last_seen = now
             self._update_observed_hz(state, "imu", now)
             would_drop = self._equalize_decision(state, "imu")
+
+            if would_drop and self.equalize_mode == "enforce":
+                return
+
+            state.last_accepted_imu_ts = now
             state.imu_batch_count += 1
             state.imu_xyz = (
                 parsed_batch["first_x"],
@@ -463,26 +459,30 @@ class NuanicMonitor:
             )
             state.imu_batch_buffer.append(parsed_batch)
 
-            row = self._base_row(state, "IMU_BATCH_468F") + [
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                parsed_batch["clock"],
-                parsed_batch["context"],
-                parsed_batch["first_x"],
-                parsed_batch["first_y"],
-                parsed_batch["first_z"],
-                f"{parsed_batch['motion_intensity']:.2f}",
-                "",
-                data[8:].hex(),
-                data.hex(),
-                "",
-            ] + self._row_rate_tail(state, would_drop)
+            row = (
+                self._base_row(state, "IMU_BATCH_468F")
+                + [
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    parsed_batch["clock"],
+                    parsed_batch["context"],
+                    parsed_batch["first_x"],
+                    parsed_batch["first_y"],
+                    parsed_batch["first_z"],
+                    f"{parsed_batch['motion_intensity']:.2f}",
+                    "",
+                    data[8:].hex(),
+                    data.hex(),
+                    "",
+                ]
+                + self._row_rate_tail(state, would_drop)
+            )
             self._enqueue_log(state, row)
 
         return _cb
@@ -498,26 +498,30 @@ class NuanicMonitor:
             state_code = data[0] if len(data) >= 1 else None
             would_drop = False
 
-            row = self._base_row(state, "STATE_3C18") + [
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                state_code if state_code is not None else "",
-                data.hex(),
-                data.hex(),
-                "",
-            ] + self._row_rate_tail(state, would_drop)
+            row = (
+                self._base_row(state, "STATE_3C18")
+                + [
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    state_code if state_code is not None else "",
+                    data.hex(),
+                    data.hex(),
+                    "",
+                ]
+                + self._row_rate_tail(state, would_drop)
+            )
             self._enqueue_log(state, row)
 
         return _cb
@@ -532,26 +536,30 @@ class NuanicMonitor:
             state.live_eda_count += 1
             would_drop = False
 
-            row = self._base_row(state, "LIVE_EDA_42DC") + [
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                data.hex(),
-                data.hex(),
-                json.dumps({"len": len(data)}),
-            ] + self._row_rate_tail(state, would_drop)
+            row = (
+                self._base_row(state, "LIVE_EDA_42DC")
+                + [
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    data.hex(),
+                    data.hex(),
+                    json.dumps({"len": len(data)}),
+                ]
+                + self._row_rate_tail(state, would_drop)
+            )
             self._enqueue_log(state, row)
 
         return _cb
@@ -589,6 +597,26 @@ class NuanicMonitor:
         state = self._ensure_device_state(mac)
         state.status = "connecting"
 
+        # Theory of Two: Firmware Warmup Sequence for all explicitly configured Hz requests
+        if self.target_hz and self.attempt_ring_rate_control:
+            print(
+                f"[WARMUP] Priming firmware for Rate Control ({self.target_hz}Hz) on {mac}..."
+            )
+            warm_ok = await self.connector.connect_device(address=mac, device=device)
+            if warm_ok:
+                # Set the rate to kick the ring into gear, then disconnect
+                await self.connector.attempt_set_sample_rate(
+                    target_hz=int(self.target_hz),
+                    address=mac,
+                )
+                print(f"[WARMUP] Releasing {mac} to complete prime sequence...")
+                await self.connector.disconnect(address=mac)
+                await asyncio.sleep(2.0)
+            else:
+                print(
+                    f"[WARMUP] Failed initial prime connect for {mac}. Trying normal path."
+                )
+
         ok = await self.connector.connect_device(address=mac, device=device)
         if not ok:
             state.status = "disconnected"
@@ -612,6 +640,12 @@ class NuanicMonitor:
             if result.get("echo_hex"):
                 detail_bits.append(f"e={result['echo_hex']}")
             state.rate_control_detail = " ".join(detail_bits)
+            print(
+                f"[INFO] {mac} Rate: {result.get('target_hz')}Hz | "
+                f"Stat: {result.get('status')} | "
+                f"P: {result.get('payload_hex')} | "
+                f"E: {result.get('echo_hex')}"
+            )
         elif self.target_hz:
             state.rate_control_status = "not-requested"
         else:
@@ -634,15 +668,31 @@ class NuanicMonitor:
     ) -> bool:
         """Start monitoring one or many rings.
 
-                - If monitor_all=True and ring_addresses is empty,
-                    discover all rings.
-                - If ring_addresses is empty and monitor_all=False,
-                    use interactive selection.
+        - If monitor_all=True and ring_addresses is empty,
+            discover all rings.
+        - If ring_addresses is empty and monitor_all=False,
+            use interactive selection.
         """
         self.start_time = datetime.now()
         self.running = True
         self.capture_armed = False
         self._auto_reconnect = auto_reconnect
+
+        # Hardware safety cap for multi-device sessions
+        targets_count = len(ring_addresses or [])
+        if monitor_all or targets_count > 1:
+            if self.target_hz and self.target_hz > 10:
+                if self.force_hz:
+                    print(
+                        f"[DANGER] Multi-ring Hz safety cap bypassed "
+                        f"via force: {self.target_hz} Hz"
+                    )
+                else:
+                    print(
+                        f"[WARN] Multi-ring sessions are unstable above 10 Hz. "
+                        f"Capping {self.target_hz} Hz -> 10 Hz."
+                    )
+                    self.target_hz = 10.0
 
         if not ring_addresses and not monitor_all:
             # Backward-compatible single selection flow.
@@ -664,9 +714,7 @@ class NuanicMonitor:
             self.start_time = datetime.now()
             self.capture_armed = True
 
-            self._health_task = asyncio.create_task(
-                self._connection_health_loop()
-            )
+            self._health_task = asyncio.create_task(self._connection_health_loop())
             return True
 
         # Multi-device path.
@@ -706,9 +754,7 @@ class NuanicMonitor:
         while self.running:
             for mac, state in list(self.device_states.items()):
                 client = self.connector.get_client(mac)
-                is_connected = bool(
-                    client and getattr(client, "is_connected", False)
-                )
+                is_connected = bool(client and getattr(client, "is_connected", False))
 
                 if is_connected:
                     if state.status != "connected":
@@ -761,34 +807,31 @@ class NuanicMonitor:
 
     def dashboard_rows(self) -> List[Dict[str, str]]:
         rows: List[Dict[str, str]] = []
-        for mac in sorted(self.device_states.keys()):
-            state = self.device_states[mac]
+        for mac, state in self.device_states.items():
+            bat_str = f"{state.battery}%" if state.battery else "-"
+            eda_str = str(state.raw_eda) if state.raw_eda else "N/A"
+            filt_str = f"{state.filtered_us:.3f}" if state.filtered_us else "N/A"
+            ar_str = f"{state.arousal_score:.1f}"
+            dne_str = (
+                str(state.dne_stress_index)
+                if state.dne_stress_index is not None
+                else "N/A"
+            )
+            rate_hz = f"{state.d306_observed_hz:.1f}/{state.imu_observed_hz:.1f}"
+            hb_mark = "●" if state.heartbeat_tick else " "
+            rate_hz = f"{hb_mark} {rate_hz}"
+
             imu_x, imu_y, imu_z = state.imu_xyz
             rows.append(
                 {
                     "device_mac": mac,
                     "connection_status": state.status,
-                    "battery": (
-                        "N/A" if state.battery is None else f"{state.battery}%"
-                    ),
-                    "raw_eda": (
-                        "N/A" if state.raw_eda is None else str(state.raw_eda)
-                    ),
-                    "filtered_us": (
-                        "N/A"
-                        if state.filtered_us is None
-                        else f"{state.filtered_us:.3f}"
-                    ),
-                    "arousal_score": f"{state.arousal_score:.1f}",
-                    "dne_score": (
-                        "N/A"
-                        if state.dne_stress_index is None
-                        else f"{state.dne_stress_index}"
-                    ),
-                    "observed_hz": (
-                        f"{state.d306_observed_hz:.1f}"
-                        f"/{state.imu_observed_hz:.1f}"
-                    ),
+                    "battery": bat_str,
+                    "raw_eda": eda_str,
+                    "filtered_us": filt_str,
+                    "arousal_score": ar_str,
+                    "dne_score": dne_str,
+                    "observed_hz": rate_hz,
                     "rate_control": state.rate_control_status,
                     "imu_xyz": f"({imu_x}, {imu_y}, {imu_z})",
                 }

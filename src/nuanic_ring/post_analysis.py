@@ -122,8 +122,16 @@ def _analyze_single_file(path: Path) -> ScoreComparison:
     if "device_mac" in df.columns and not df["device_mac"].dropna().empty:
         device_mac = str(df["device_mac"].dropna().iloc[0])
 
-    d306_hz_median = float(df["D306_Observed_Hz"].dropna().median()) if df["D306_Observed_Hz"].notna().any() else float("nan")
-    imu_hz_median = float(df["IMU_Observed_Hz"].dropna().median()) if df["IMU_Observed_Hz"].notna().any() else float("nan")
+    d306_hz_median = (
+        float(df["D306_Observed_Hz"].dropna().median())
+        if df["D306_Observed_Hz"].notna().any()
+        else float("nan")
+    )
+    imu_hz_median = (
+        float(df["IMU_Observed_Hz"].dropna().median())
+        if df["IMU_Observed_Hz"].notna().any()
+        else float("nan")
+    )
 
     return ScoreComparison(
         path=path,
