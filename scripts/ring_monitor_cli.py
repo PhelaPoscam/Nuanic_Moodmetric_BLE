@@ -27,9 +27,7 @@ def _parse_ring_addresses(
     if ring_addr:
         addresses.append(ring_addr.strip())
     if ring_addrs:
-        addresses.extend(
-            [a.strip() for a in ring_addrs.split(",") if a.strip()]
-        )
+        addresses.extend([a.strip() for a in ring_addrs.split(",") if a.strip()])
 
     dedup: List[str] = []
     seen: set[str] = set()
@@ -47,10 +45,7 @@ def _build_dashboard_table(
     elapsed_seconds: float,
 ):
     table = Table(
-        title=(
-            "Nuanic Multi-Ring Dashboard"
-            f"  |  Elapsed: {elapsed_seconds:.1f}s"
-        )
+        title=("Nuanic Multi-Ring Dashboard" f"  |  Elapsed: {elapsed_seconds:.1f}s")
     )
     table.add_column("Device MAC", style="cyan")
     table.add_column("Connection Status", style="magenta")
@@ -224,6 +219,11 @@ Examples:
         ),
     )
     parser.add_argument(
+        "--force-hz",
+        action="store_true",
+        help="Bypass the 10 Hz safety cap for multi-ring sessions (DANGER)",
+    )
+    parser.add_argument(
         "--rate-control",
         choices=["yes", "no"],
         default="yes",
@@ -259,10 +259,7 @@ Examples:
     parser.add_argument(
         "--discover",
         action="store_true",
-        help=(
-            "Discover all ring services/characteristics "
-            "for one target and exit"
-        ),
+        help=("Discover all ring services/characteristics " "for one target and exit"),
     )
 
     parser.add_argument(
@@ -293,6 +290,29 @@ Examples:
     args = parser.parse_args()
     console = Console()
 
+    target_addresses = []
+    if args.ring_addrs:
+        target_addresses = [a.strip() for a in args.ring_addrs.split(",") if a.strip()]
+
+    # Multiple rings are unstable above 10 Hz
+    is_multi = args.monitor_all or len(target_addresses) > 1
+    if is_multi and args.target_hz and args.target_hz > 10:
+        if args.force_hz:
+            console.print(
+                f"\n[bold red]💀 DANGER: HIGH FREQUENCY SESSION FORCED "
+                f"({args.target_hz} Hz)[/bold red]\n"
+                f"Multi-ring sessions above 10 Hz are unstable and may "
+                f"freeze the ring firmware.\n"
+            )
+        else:
+            console.print(
+                f"\n[bold yellow]⚠️  STABILITY WARNING:[/bold yellow] "
+                f"Multi-ring sessions are unstable above 10 Hz. "
+                f"Capping [bold cyan]{args.target_hz} Hz[/bold cyan] -> "
+                f"[bold green]10 Hz[/bold green].\n"
+            )
+            args.target_hz = 10
+
     if args.discover:
         connector = NuanicConnector(target_address=args.ring_addr)
         if not await connector.connect():
@@ -314,9 +334,7 @@ Examples:
         console.print(f"\nFound {len(rings)} ring(s):")
         for i, ring in enumerate(rings, 1):
             source = ring.get("source", "scan")
-            console.print(
-                f"  {i}. {ring['name']:20} | {ring['address']} | {source}"
-            )
+            console.print(f"  {i}. {ring['name']:20} | {ring['address']} | {source}")
         return
 
     if args.waveform:
@@ -325,6 +343,8 @@ Examples:
             window_seconds=args.window_seconds,
             refresh_ms=args.refresh_ms,
             smooth_window=args.smooth,
+            target_hz=args.target_hz,
+            attempt_rate_control=(args.rate_control == "yes"),
         )
         return
 
@@ -337,6 +357,7 @@ Examples:
         target_hz=args.target_hz,
         equalize_mode=args.equalize_mode,
         attempt_ring_rate_control=(args.rate_control == "yes"),
+        force_hz=args.force_hz,
     )
 
     explicit_addresses = _parse_ring_addresses(args.ring_addr, args.ring_addrs)
@@ -344,13 +365,10 @@ Examples:
 
     if not explicit_addresses and not monitor_all:
         console.print(
-            "Starting in legacy single-ring mode "
-            "(interactive ring selection)."
+            "Starting in legacy single-ring mode " "(interactive ring selection)."
         )
     elif explicit_addresses:
-        console.print(
-            f"Starting explicit mode for {len(explicit_addresses)} ring(s)."
-        )
+        console.print(f"Starting explicit mode for {len(explicit_addresses)} ring(s).")
     else:
         console.print("Starting monitor-all discovery mode.")
 

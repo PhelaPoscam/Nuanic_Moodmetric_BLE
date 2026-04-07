@@ -32,7 +32,9 @@ class NuanicConnector:
     BATTERY_CHARACTERISTIC = "00002a19-0000-1000-8000-00805f9b34fb"
     STRESS_CHARACTERISTIC = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # 92-byte bulk waveform/motion stream (~1 Hz)
     IMU_CHARACTERISTIC = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # 16-byte real-time sensor+quality frame (~22-25 Hz)
-    STATE_CHARACTERISTIC = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # 1-byte off-finger/on-finger indicator
+    STATE_CHARACTERISTIC = (
+        "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # 1-byte off-finger/on-finger indicator
+    )
     RAW_EDA_CHARACTERISTIC = STATE_CHARACTERISTIC
     MYSTERY_NOTIFY_CHARACTERISTIC = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
 
@@ -76,7 +78,10 @@ class NuanicConnector:
             event = self._disconnect_events.get(address)
             if event:
                 event.set()
-            if self.client and getattr(self.client, "address", "").lower() == address.lower():
+            if (
+                self.client
+                and getattr(self.client, "address", "").lower() == address.lower()
+            ):
                 self._disconnect_event.set()
             print(f"[DISC] BLE disconnect callback fired for {address}")
 
@@ -828,9 +833,7 @@ class NuanicConnector:
             return scanned
 
         paired = self._get_windows_paired_rings()
-        merged = {
-            entry["address"].upper(): entry for entry in scanned
-        }
+        merged = {entry["address"].upper(): entry for entry in scanned}
         for entry in paired:
             key = entry["address"].upper()
             if key not in merged:
@@ -878,7 +881,9 @@ class NuanicConnector:
                 self._save_last_address(address)
                 return True
             except Exception as e:
-                print(f"[CONN-FAIL] {address} attempt {attempt}/{self.max_connect_attempts}: {e}")
+                print(
+                    f"[CONN-FAIL] {address} attempt {attempt}/{self.max_connect_attempts}: {e}"
+                )
                 try:
                     await client.disconnect()
                 except Exception:
@@ -918,7 +923,9 @@ class NuanicConnector:
 
         for idx, address in enumerate(target_addresses):
             entry = discovered_by_addr.get(address)
-            ok = await self.connect_device(address=address, device=(entry or {}).get("device"))
+            ok = await self.connect_device(
+                address=address, device=(entry or {}).get("device")
+            )
             results[address] = ok
             if idx < len(target_addresses) - 1 and stagger_delay > 0:
                 await asyncio.sleep(stagger_delay)
@@ -1228,6 +1235,9 @@ class NuanicConnector:
                 "target_hz": int(target_hz),
                 "address": (address or ""),
             }
+
+        # Give the ring stack a moment to settle after connection
+        await asyncio.sleep(0.5)
 
         target_hz = max(1, int(target_hz))
         payloads = [

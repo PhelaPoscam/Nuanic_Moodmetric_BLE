@@ -84,11 +84,19 @@ class WaveformState:
 class NuanicWaveformViewer:
     """Connects to ring and exposes LIVE_EDA/LIVE_DNA data for plotting."""
 
-    def __init__(self, ring_addr: str | None = None, calibration_seconds: int = 60):
+    def __init__(
+        self,
+        ring_addr: str | None = None,
+        calibration_seconds: int = 60,
+        target_hz: float | None = None,
+        attempt_rate_control: bool = False,
+    ):
         self.connector = NuanicConnector(target_address=ring_addr)
         self.state = WaveformState()
         self.signal_conditioner = SignalConditioner()
         self.scorer = MMLikeScorer(calibration_seconds=calibration_seconds)
+        self.target_hz = target_hz
+        self.attempt_rate_control = attempt_rate_control
         self._running = False
 
     def _live_eda_callback(self, sender, data):
@@ -179,18 +187,24 @@ class NuanicWaveformViewer:
         if not await self.connector.connect():
             return False
 
+        if self.attempt_rate_control and self.target_hz:
+            print(f"[RATE] Requesting {self.target_hz} Hz sample rate...")
+            await self.connector.attempt_set_sample_rate(target_hz=int(self.target_hz))
+
         live_dna_ok = await self.connector.subscribe_to_imu(self._live_dna_callback)
         imu_ok = await self.connector.subscribe_to_stress(self._imu_callback)
         live_eda_ok = await self.connector.subscribe_to_live_eda(
             self._live_eda_callback
         )
 
-        if not live_dna_ok:
-            await self.connector.unsubscribe_from_imu()
-            await self.connector.unsubscribe_from_stress()
-            await self.connector.unsubscribe_from_live_eda()
-            await self.connector.disconnect()
-            return False
+        if not (live_dna_ok and imu_ok and live_eda_ok):
+            print("[WARN] Some telemetry streams failed to subscribe")
+            if not live_dna_ok:
+                await self.connector.unsubscribe_from_imu()
+                await self.connector.unsubscribe_from_stress()
+                await self.connector.unsubscribe_from_live_eda()
+                await self.connector.disconnect()
+                return False
 
         self._running = True
         return True
@@ -411,10 +425,15 @@ async def run_waveform_viewer(
     refresh_ms: int = 120,
     smooth_window: int = 1,
     calibration_seconds: int = 60,
+    target_hz: float | None = None,
+    attempt_rate_control: bool = False,
 ) -> int:
     """Run standalone live telemetry plotter."""
     viewer = NuanicWaveformViewer(
-        ring_addr=ring_addr, calibration_seconds=calibration_seconds
+        ring_addr=ring_addr,
+        calibration_seconds=calibration_seconds,
+        target_hz=target_hz,
+        attempt_rate_control=attempt_rate_control,
     )
 
     if not await viewer.connect_and_subscribe():
