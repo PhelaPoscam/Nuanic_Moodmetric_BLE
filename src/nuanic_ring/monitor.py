@@ -123,6 +123,7 @@ class NuanicMonitor:
 
         self.start_time: Optional[datetime] = None
         self.running = False
+        self.capture_armed = False
         self.device_states: Dict[str, RingDeviceState] = {}
 
         self._health_task: Optional[asyncio.Task[None]] = None
@@ -370,6 +371,9 @@ class NuanicMonitor:
 
     def _make_imu_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
+            if not self.capture_armed:
+                return
+
             state = self._ensure_device_state(mac)
             parsed = self._parse_d306_packet(data)
             if not parsed:
@@ -439,6 +443,9 @@ class NuanicMonitor:
 
     def _make_stress_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
+            if not self.capture_armed:
+                return
+
             state = self._ensure_device_state(mac)
             parsed_batch = self._parse_468f_imu_batch(data)
             if not parsed_batch:
@@ -482,6 +489,9 @@ class NuanicMonitor:
 
     def _make_raw_eda_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
+            if not self.capture_armed:
+                return
+
             state = self._ensure_device_state(mac)
             state.last_seen = datetime.now()
             state.state_count += 1
@@ -514,6 +524,9 @@ class NuanicMonitor:
 
     def _make_live_eda_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
+            if not self.capture_armed:
+                return
+
             state = self._ensure_device_state(mac)
             state.last_seen = datetime.now()
             state.live_eda_count += 1
@@ -628,6 +641,7 @@ class NuanicMonitor:
         """
         self.start_time = datetime.now()
         self.running = True
+        self.capture_armed = False
         self._auto_reconnect = auto_reconnect
 
         if not ring_addresses and not monitor_all:
@@ -646,6 +660,9 @@ class NuanicMonitor:
             ok = await self._subscribe_device_streams(mac)
             if not ok:
                 state.status = "degraded"
+
+            self.start_time = datetime.now()
+            self.capture_armed = True
 
             self._health_task = asyncio.create_task(
                 self._connection_health_loop()
@@ -680,6 +697,8 @@ class NuanicMonitor:
             if idx < len(targets) - 1 and stagger_delay > 0:
                 await asyncio.sleep(stagger_delay)
 
+        self.start_time = datetime.now()
+        self.capture_armed = True
         self._health_task = asyncio.create_task(self._connection_health_loop())
         return connected_any
 
@@ -719,6 +738,7 @@ class NuanicMonitor:
 
     async def stop_multi(self) -> None:
         self.running = False
+        self.capture_armed = False
 
         if self._health_task:
             self._health_task.cancel()
