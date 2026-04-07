@@ -32,11 +32,23 @@ python scripts/ring_monitor_cli.py --calibration-seconds 60
 # Live EDA + Arousal Score GUI dashboard
 python scripts/ring_monitor_cli.py --waveform --calibration-seconds 60
 
+# Monitor all visible rings at once
+python scripts/ring_monitor_cli.py --monitor-all --calibration-seconds 15
+
+# Explicit two-ring monitoring by MAC addresses
+python scripts/ring_monitor_cli.py --ring-addrs 41:09:FB:6B:95:8D,69:1D:C9:2E:19:64 --duration 30
+
+# Run a short session and auto-print DNE-vs-computed score analysis
+python scripts/ring_monitor_cli.py --monitor-all --duration 30 --post-analysis yes
+
 # Discover exactly which proprietary GATT profile is active on your ring
 python scripts/ring_monitor_cli.py --discover
 
 # Offline analysis of a recorded session CSV
 python scripts/ring_analyzer_cli.py data/ring_logs/my_session.csv
+
+# Quick analysis over latest 2 ring CSVs
+python scripts/ring_post_analysis_cli.py --latest 2
 ```
 
 ---
@@ -88,6 +100,32 @@ The scoring pipeline runs on every EDA packet:
 
 The scorer calibrates over the first 60 seconds before emitting meaningful scores.
 
+The real-time dashboard shows two parallel stress/arousal signals:
+
+1. Our computed score (`Our Arousal (1-100)`) from `MMLikeScorer`.
+2. Ring proprietary sender value (`Ring DNE (0-100)`) parsed from the D306 stream.
+
+This makes side-by-side comparison possible during live sessions.
+
+---
+
+## 📈 Post-Session Score Comparison
+
+`ring_post_analysis_cli.py` compares proprietary `Stress_Index` (DNE) against
+`MM_Arousal_Score` from your pipeline for the latest ring logs.
+
+Reported metrics per file:
+
+1. Pearson correlation (`corr`)
+2. Mean offset (`ours - dne`)
+3. Best lag in samples (`best_lag_samples`) and corresponding lag correlation
+
+Example:
+
+```bash
+python scripts/ring_post_analysis_cli.py --log-dir data/ring_logs --latest 2
+```
+
 ---
 
 ## 🛠️ Usage in Code
@@ -109,3 +147,17 @@ asyncio.run(run_sensor())
 
 - **Hardware Reverse-Engineering:** [Ring Reverse-Engineering Report](docs/ring_reverse_engineering_report.md)
 - **Ring Integration API & Master Guide:** [Ring Master Guide](docs/ring_master_guide.md)
+
+## UUID Mapping
+
+The current code keeps the old UUIDs, but the verified best-fit meanings are:
+
+| UUID | Current label | Verified interpretation |
+|---|---|---|
+| `3c180fcc-bfec-4b7c-8e52-1a37f123e449` | `STATE_CHARACTERISTIC` / `RAW_EDA_CHARACTERISTIC` | Off-finger / on-finger state indicator stream |
+| `7c3b82e7-22b7-4cb6-8458-ba325edf6ede` | `STORAGE_UUID` | Historical storage / buffer characteristic |
+| `42dcb71b-1817-43bd-8ea3-7272780a1c9f` | `LIVE_EDA_UUID` | Live notify stream (currently no reliable payload) |
+| `d306262b-c8c9-4c4b-9050-3a41dea706e5` | `LIVE_DNA_UUID` / IMU stream | High-rate motion / physiology stream |
+| `dc9c31a7-fbd3-467a-8777-10900c423d3b` | `SET_TIME_UUID` | Writable config/timestamp register |
+| `516b0fb6-d861-4619-9dd0-0105e8b85128` | `SAMPLE_RATE_UUID` | Writable config register; rate-write effect still unproven |
+| `3cce21a7-e602-4e02-8c52-1e0366c1c846` | `STORAGE_FORMAT_UUID` | Writable config register |

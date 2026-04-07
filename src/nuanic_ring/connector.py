@@ -1,12 +1,14 @@
-"""BLE connection and device management for Nuanic ring"""
+"""BLE connection and device management for Nuanic ring(s)."""
 
 import asyncio
 import inspect
-import os
 import platform
+import struct
 import subprocess
 from pathlib import Path
-from bleak import BleakScanner, BleakClient
+from typing import Any, Callable, Dict, List, Optional
+
+from bleak import BleakClient, BleakScanner
 
 # Persists the last-used ring MAC so we can reconnect even when a stale
 # OS-level connection prevents the ring from advertising.
@@ -14,7 +16,7 @@ _ADDR_CACHE_FILE = Path(__file__).parents[3] / "data" / ".last_ring_addr"
 
 
 class NuanicConnector:
-    """Handles BLE connection to Nuanic ring"""
+    """Handles BLE connections to one or many Nuanic/Moodmetric rings."""
 
     # GATT UUIDs (current best-fit interpretation from 2026-03 live captures)
     STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"
@@ -30,7 +32,8 @@ class NuanicConnector:
     BATTERY_CHARACTERISTIC = "00002a19-0000-1000-8000-00805f9b34fb"
     STRESS_CHARACTERISTIC = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # 92-byte bulk waveform/motion stream (~1 Hz)
     IMU_CHARACTERISTIC = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # 16-byte real-time sensor+quality frame (~22-25 Hz)
-    RAW_EDA_CHARACTERISTIC = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # 1-byte state/on-finger indicator candidate
+    STATE_CHARACTERISTIC = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # 1-byte off-finger/on-finger indicator
+    RAW_EDA_CHARACTERISTIC = STATE_CHARACTERISTIC
     MYSTERY_NOTIFY_CHARACTERISTIC = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
 
     def __init__(
@@ -56,10 +59,28 @@ class NuanicConnector:
         self.device = None
         self._disconnect_event = asyncio.Event()
 
+        # Multi-device runtime registries keyed by BLE MAC address.
+        self.clients = {}
+        self.devices = {}
+        self._disconnect_events = {}
+
     def _on_disconnect(self, _client):
         """Bleak disconnect callback to confirm OS-level link release."""
         self._disconnect_event.set()
         print("[DISC] BLE disconnect callback fired")
+
+    def _on_disconnect_for(self, address: str):
+        """Factory for per-device disconnected callbacks."""
+
+        def _cb(_client):
+            event = self._disconnect_events.get(address)
+            if event:
+                event.set()
+            if self.client and getattr(self.client, "address", "").lower() == address.lower():
+                self._disconnect_event.set()
+            print(f"[DISC] BLE disconnect callback fired for {address}")
+
+        return _cb
 
     # ------------------------------------------------------------------
     # Address cache – lets us reconnect directly when the ring is bonded
@@ -139,7 +160,7 @@ class NuanicConnector:
         except Exception:
             pass
 
-    def _create_bleak_client(self, target):
+    def _create_bleak_client(self, target, disconnected_callback=None):
         """Create BleakClient with robust Windows-friendly arguments.
 
         Uses pair=... when available and gracefully falls back for older
@@ -147,7 +168,7 @@ class NuanicConnector:
         """
         kwargs = {
             "timeout": self.timeout,
-            "disconnected_callback": self._on_disconnect,
+            "disconnected_callback": disconnected_callback or self._on_disconnect,
         }
 
         # Windows-specific tweaks to help avoid zombie connections and cache issues
@@ -223,6 +244,7 @@ class NuanicConnector:
         print("[SCAN] Discovering Nuanic rings...")
 
         try:
+            merged = {}
             for attempt in range(1, max(1, attempts) + 1):
                 if attempts > 1:
                     print(
@@ -248,13 +270,13 @@ class NuanicConnector:
                                 entry["device"] = device
                             nuanic_devices.append(entry)
 
-                if nuanic_devices:
-                    return nuanic_devices
+                for entry in nuanic_devices:
+                    merged[entry["address"].upper()] = entry
 
                 if attempt < attempts:
                     await asyncio.sleep(max(0.1, retry_delay))
 
-            return []
+            return list(merged.values())
 
         except asyncio.CancelledError:
             # Re-raise so Ctrl+C still works
@@ -674,6 +696,10 @@ class NuanicConnector:
                         await self._cleanup_client()
                     else:
                         print("\n[OK] Connection established!\n")
+                        address = str(self.client.address).upper()
+                        self.clients[address] = self.client
+                        if self.device is not None:
+                            self.devices[address] = self.device
                         self._save_last_address(self.client.address)
                         return True
                 except Exception as e:
@@ -762,6 +788,10 @@ class NuanicConnector:
 
                 # Success!
                 print(f"\n[OK] Connection established!\n")
+                address = str(self.client.address).upper()
+                self.clients[address] = self.client
+                if self.device is not None:
+                    self.devices[address] = self.device
                 self._save_last_address(self.client.address)
                 return True
 
@@ -776,27 +806,168 @@ class NuanicConnector:
             print("\n[INFO] Connect aborted by user.")
             await self._cleanup_client()
             raise
-        except Exception as e:
-            print(f"\n[ERROR] Connect failed unexpectedly: {e}")
-            await self._cleanup_client()
-            raise
 
-    async def disconnect(self):
+    async def discover_all_matching_rings(
+        self,
+        include_device: bool = True,
+        scan_timeout: float = 4.0,
+        attempts: int = 2,
+        retry_delay: float = 0.5,
+    ) -> List[Dict[str, Any]]:
+        """Discover all visible Nuanic/Moodmetric rings."""
+        scanned = await self.list_available_rings(
+            include_device=include_device,
+            scan_timeout=scan_timeout,
+            attempts=attempts,
+            retry_delay=retry_delay,
+        )
+
+        # On Windows, merge in paired records to catch bonded devices that do not
+        # advertise reliably during a short scan window.
+        if platform.system() != "Windows":
+            return scanned
+
+        paired = self._get_windows_paired_rings()
+        merged = {
+            entry["address"].upper(): entry for entry in scanned
+        }
+        for entry in paired:
+            key = entry["address"].upper()
+            if key not in merged:
+                merged[key] = {
+                    "address": entry["address"],
+                    "name": entry.get("name") or "Nuanic",
+                    "device": None,
+                }
+
+        return list(merged.values())
+
+    async def connect_device(self, address: str, device: Any = None) -> bool:
+        """Connect one device and register it in the multi-device registry."""
+        address = address.upper()
+        event = self._disconnect_events.setdefault(address, asyncio.Event())
+        event.clear()
+
+        target = device or address
+        client = self._create_bleak_client(
+            target,
+            disconnected_callback=self._on_disconnect_for(address),
+        )
+
+        for attempt in range(1, self.max_connect_attempts + 1):
+            try:
+                await client.connect()
+                if not getattr(client, "is_connected", False):
+                    raise RuntimeError("connection not established")
+
+                if not self.pair_on_connect:
+                    try:
+                        await client.pair()
+                    except Exception:
+                        pass
+
+                self.clients[address] = client
+
+                if device is not None:
+                    self.devices[address] = device
+
+                # Keep legacy single-device fields aligned with the most recent connect.
+                self.client = client
+                self.device = device
+                self.target_address = address
+                self._save_last_address(address)
+                return True
+            except Exception as e:
+                print(f"[CONN-FAIL] {address} attempt {attempt}/{self.max_connect_attempts}: {e}")
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                if attempt < self.max_connect_attempts:
+                    await asyncio.sleep(self.connect_backoff_seconds)
+
+        return False
+
+    async def connect_multiple(
+        self,
+        addresses=None,
+        max_devices=None,
+        stagger_delay: float = 1.25,
+        scan_timeout: float = 4.0,
+        scan_attempts: int = 2,
+    ) -> Dict[str, bool]:
+        """Connect to many rings with staggered timing to avoid adapter overload.
+
+        Returns:
+            dict: mapping {address: bool}
+        """
+        results = {}
+
+        # Build target list from discovery when explicit addresses are not provided.
+        discovered = await self.discover_all_matching_rings(
+            include_device=True,
+            scan_timeout=scan_timeout,
+            attempts=scan_attempts,
+            retry_delay=0.5,
+        )
+        discovered_by_addr = {d["address"]: d for d in discovered}
+
+        target_addresses = list(addresses or discovered_by_addr.keys())
+        if max_devices is not None:
+            target_addresses = target_addresses[: max(0, max_devices)]
+
+        for idx, address in enumerate(target_addresses):
+            entry = discovered_by_addr.get(address)
+            ok = await self.connect_device(address=address, device=(entry or {}).get("device"))
+            results[address] = ok
+            if idx < len(target_addresses) - 1 and stagger_delay > 0:
+                await asyncio.sleep(stagger_delay)
+
+        return results
+
+    async def disconnect(self, address: Optional[str] = None) -> None:
         """Disconnect from ring.
 
         By default this keeps OS-level pairing intact. Set
         unpair_on_disconnect=True on connector init if you explicitly want
         forced unpair for troubleshooting.
         """
-        if self.client:
-            was_connected = bool(getattr(self.client, "is_connected", False))
-            await self._cleanup_client()
-            if was_connected:
+        if address:
+            address = address.upper()
+            client = self.clients.get(address)
+            if client:
+                try:
+                    await client.disconnect()
+                    print("[OK] Disconnected")
+                except Exception:
+                    pass
+                finally:
+                    self.clients.pop(address, None)
+                    self.devices.pop(address, None)
+        else:
+            had_any = False
+            for addr, client in list(self.clients.items()):
+                if client:
+                    had_any = True
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+                    finally:
+                        self.clients.pop(addr, None)
+                        self.devices.pop(addr, None)
+
+            if self.client:
+                was_connected = bool(getattr(self.client, "is_connected", False))
+                await self._cleanup_client()
+                if was_connected:
+                    had_any = True
+
+            if had_any:
                 print("[OK] Disconnected")
             else:
                 print("[INFO] No active BLE connection to close")
 
-        # Optional unpair from Windows Bluetooth
         if self.unpair_on_disconnect and self.device:
             await self._unpair_device()
 
@@ -840,119 +1011,186 @@ class NuanicConnector:
         except Exception as e:
             print(f"[WARN] Unpair error: {e}")
 
-    async def read_battery(self):
+    async def read_battery(self, address: Optional[str] = None) -> Optional[int]:
         """Read battery level"""
-        if not self.client:
+        client = self.clients.get(address.upper()) if address else self.client
+        if not client:
             return None
 
         try:
-            value = await self.client.read_gatt_char(self.BATTERY_CHARACTERISTIC)
+            value = await client.read_gatt_char(self.BATTERY_CHARACTERISTIC)
             return value[0]
         except Exception as e:
             print(f"[FAIL] Battery read error: {e}")
             return None
 
-    async def subscribe_to_stress(self, callback):
+    def get_client(self, address: Optional[str] = None) -> Optional[BleakClient]:
+        """Return a connected client by address or the legacy single client."""
+        if address:
+            return self.clients.get(address.upper())
+        return self.client
+
+    def connected_addresses(self) -> List[str]:
+        """Return currently tracked connected addresses."""
+        addrs = []
+        for address, client in self.clients.items():
+            if getattr(client, "is_connected", False):
+                addrs.append(address)
+        return addrs
+
+    async def subscribe_to_stress(
+        self,
+        callback: Callable[[Any, bytes], None],
+        address: Optional[str] = None,
+    ) -> bool:
         """Subscribe to stress data notifications"""
-        if not self.client:
+        client = self.clients.get(address.upper()) if address else self.client
+        if not client:
             print("[FAIL] Subscription error: No client")
             return False
 
-        if not self.client.is_connected:
+        if not client.is_connected:
             print("[FAIL] Subscription error: Not connected")
             return False
 
         try:
-            await self.client.start_notify(self.STRESS_CHARACTERISTIC, callback)
+            await client.start_notify(self.STRESS_CHARACTERISTIC, callback)
             print("[OK] Subscribed to stress data")
             return True
         except Exception as e:
             print(f"[FAIL] Subscription error: {e}")
             return False
 
-    async def subscribe_to_imu(self, callback):
+    async def subscribe_to_imu(
+        self,
+        callback: Callable[[Any, bytes], None],
+        address: Optional[str] = None,
+    ) -> bool:
         """Subscribe to IMU (accelerometer) notifications"""
-        if not self.client:
+        client = self.clients.get(address.upper()) if address else self.client
+        if not client:
             print("[FAIL] IMU subscription error: No client")
             return False
 
-        if not self.client.is_connected:
+        if not client.is_connected:
             print("[FAIL] IMU subscription error: Not connected")
             return False
 
         try:
-            await self.client.start_notify(self.IMU_CHARACTERISTIC, callback)
+            await client.start_notify(self.IMU_CHARACTERISTIC, callback)
             print("[OK] Subscribed to IMU data")
             return True
         except Exception as e:
             print(f"[FAIL] IMU subscription error: {e}")
             return False
 
-    async def unsubscribe_from_stress(self):
+    async def unsubscribe_from_stress(
+        self,
+        address: Optional[str] = None,
+    ) -> None:
         """Unsubscribe from stress notifications"""
-        if self.client:
+        if address:
+            client = self.clients.get(address.upper())
+        else:
+            client = self.client
+
+        if client:
             try:
-                await self.client.stop_notify(self.STRESS_CHARACTERISTIC)
+                await client.stop_notify(self.STRESS_CHARACTERISTIC)
             except:
                 pass
 
-    async def unsubscribe_from_imu(self):
+    async def unsubscribe_from_imu(
+        self,
+        address: Optional[str] = None,
+    ) -> None:
         """Unsubscribe from IMU notifications"""
-        if self.client:
+        if address:
+            client = self.clients.get(address.upper())
+        else:
+            client = self.client
+
+        if client:
             try:
-                await self.client.stop_notify(self.IMU_CHARACTERISTIC)
+                await client.stop_notify(self.IMU_CHARACTERISTIC)
             except:
                 pass
 
-    async def subscribe_to_raw_eda(self, callback):
+    async def subscribe_to_raw_eda(
+        self,
+        callback: Callable[[Any, bytes], None],
+        address: Optional[str] = None,
+    ) -> bool:
         """Subscribe to raw EDA data notifications"""
-        if not self.client:
+        client = self.clients.get(address.upper()) if address else self.client
+        if not client:
             print("[FAIL] Subscription error: No client")
             return False
 
-        if not self.client.is_connected:
+        if not client.is_connected:
             print("[FAIL] Subscription error: Not connected")
             return False
 
         try:
-            await self.client.start_notify(self.RAW_EDA_CHARACTERISTIC, callback)
+            await client.start_notify(self.RAW_EDA_CHARACTERISTIC, callback)
             print("[OK] Subscribed to raw EDA data")
             return True
         except Exception as e:
             print(f"[FAIL] Subscription error: {e}")
             return False
 
-    async def unsubscribe_from_raw_eda(self):
+    async def unsubscribe_from_raw_eda(
+        self,
+        address: Optional[str] = None,
+    ) -> None:
         """Unsubscribe from raw EDA notifications"""
-        if self.client:
+        if address:
+            client = self.clients.get(address.upper())
+        else:
+            client = self.client
+
+        if client:
             try:
-                await self.client.stop_notify(self.RAW_EDA_CHARACTERISTIC)
+                await client.stop_notify(self.RAW_EDA_CHARACTERISTIC)
             except:
                 pass
 
-    async def subscribe_to_live_eda(self, callback):
+    async def subscribe_to_live_eda(
+        self,
+        callback: Callable[[Any, bytes], None],
+        address: Optional[str] = None,
+    ) -> bool:
         """Subscribe to LIVE_EDA UUID notifications (42dcb71b...)."""
-        if not self.client:
+        client = self.clients.get(address.upper()) if address else self.client
+        if not client:
             print("[FAIL] LIVE_EDA subscription error: No client")
             return False
 
-        if not self.client.is_connected:
+        if not client.is_connected:
             print("[FAIL] LIVE_EDA subscription error: Not connected")
             return False
 
         try:
-            await self.client.start_notify(self.MYSTERY_NOTIFY_CHARACTERISTIC, callback)
+            await client.start_notify(self.MYSTERY_NOTIFY_CHARACTERISTIC, callback)
             print("[OK] Subscribed to LIVE_EDA notifications")
             return True
         except Exception as e:
             print(f"[FAIL] LIVE_EDA subscription error: {e}")
             return False
 
-    async def unsubscribe_from_live_eda(self):
+    async def unsubscribe_from_live_eda(
+        self,
+        address: Optional[str] = None,
+    ) -> None:
         """Unsubscribe from LIVE_EDA UUID notifications."""
-        if self.client:
+        if address:
+            client = self.clients.get(address.upper())
+        else:
+            client = self.client
+
+        if client:
             try:
-                await self.client.stop_notify(self.MYSTERY_NOTIFY_CHARACTERISTIC)
+                await client.stop_notify(self.MYSTERY_NOTIFY_CHARACTERISTIC)
             except:
                 pass
 
@@ -970,3 +1208,73 @@ class NuanicConnector:
                     f"    [CHAR] {char.uuid}: {char.description}, Properties: {char.properties}"
                 )
         print("[INFO] Service discovery complete.\n")
+
+    async def attempt_set_sample_rate(
+        self,
+        target_hz: int,
+        address: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Attempt to request ring sample-rate configuration from host side.
+
+        Notes:
+        - A successful write or echo means transport-level success only.
+        - Firmware may still ignore the requested rate behaviorally.
+        """
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            return {
+                "ok": False,
+                "status": "not-connected",
+                "target_hz": int(target_hz),
+                "address": (address or ""),
+            }
+
+        target_hz = max(1, int(target_hz))
+        payloads = [
+            bytes([target_hz & 0xFF]),
+            struct.pack("<H", target_hz),
+            struct.pack("<I", target_hz),
+            bytes([0x01, target_hz & 0xFF]),
+            bytes([0x02, target_hz & 0xFF]),
+        ]
+        target_uuids = [
+            self.SAMPLE_RATE_UUID,
+            self.STORAGE_FORMAT_UUID,
+        ]
+
+        failures: List[str] = []
+        for uuid in target_uuids:
+            for payload in payloads:
+                try:
+                    await client.write_gatt_char(uuid, payload)
+                except Exception as e:
+                    failures.append(f"write {uuid} {payload.hex()}: {e}")
+                    continue
+
+                echo_hex = ""
+                echoed = False
+                try:
+                    echo = await client.read_gatt_char(uuid)
+                    echo_hex = bytes(echo).hex()
+                    echoed = bytes(echo) == payload
+                except Exception:
+                    pass
+
+                status = "echoed" if echoed else "written"
+                return {
+                    "ok": True,
+                    "status": status,
+                    "target_hz": target_hz,
+                    "address": (address or ""),
+                    "uuid": uuid,
+                    "payload_hex": payload.hex(),
+                    "echo_hex": echo_hex,
+                }
+
+        return {
+            "ok": False,
+            "status": "write-failed",
+            "target_hz": target_hz,
+            "address": (address or ""),
+            "errors": failures,
+        }
