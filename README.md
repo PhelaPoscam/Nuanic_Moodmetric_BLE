@@ -53,6 +53,56 @@ python scripts/ring_post_analysis_cli.py --latest 2
 
 ---
 
+## 🔗 Multi-Ring Setup
+
+The SDK is optimized for simultaneous capture from multiple rings. You can target specific devices by their MAC addresses to guarantee a stable session.
+
+### Explicit Targeting
+Use the `--ring-addrs` flag with a comma-separated list of MAC addresses:
+```bash
+python scripts/ring_monitor_cli.py --ring-addrs 41:09:FB:6B:95:8D,69:1D:C9:2E:19:64 --target-hz 16 --reset-bt
+```
+
+### Auto-Discovery
+To connect to every Nuanic ring found in the area:
+```bash
+python scripts/ring_monitor_cli.py --monitor-all --target-hz 16
+```
+
+### Connection Stability Tips
+- **Ramp-up Time**: Rings require 30–90 seconds to stabilize their internal buffers. **Lazy Logging** ensures your CSV files only start once real data is flowing.
+- **Bluetooth Reset**: If Windows fails to find a ring due to a "ghost" ACL link, use `--reset-bt` to force an OS-level radio toggle on the first failure.
+- **Stagger Delay**: Use `--stagger-delay 2.0` if you experience connection collisions when starting 3+ rings.
+
+---
+
+## 🛠️ CLI Argument Reference (`ring_monitor_cli.py`)
+
+| Argument | Description | Default |
+| :--- | :--- | :--- |
+| `--duration` | Total session length in seconds. | Unlimited |
+| `--ring-addrs` | Comma-separated list of MAC addresses to connect. | None |
+| `--monitor-all` | Connect to all discovered Nuanic rings. | False |
+| `--target-hz` | Desired sampling frequency (e.g., `10`, `16`). | 10.0 |
+| `--force-hz` | Bypass the 16Hz hardware capability safety warning. | False |
+| `--reset-bt` | Aggressively reset Windows BT radio on initial failure. | False |
+| `--log` / `--no-log` | Enable or disable CSV recording. | `--log` |
+| `--log-dir` | Folder for session CSV output. | `data/ring_logs` |
+| `--waveform` | Launch live Matplotlib plots instead of the TUI table. | False |
+| `--post-analysis` | Print a scoring comparison vs proprietary DNE on exit. | No |
+| `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
+| `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.0 |
+| `--auto-reconnect` | Automaticaly retry on connection drop. | True |
+| `--calibration-seconds` | Wait time for Arousal Scorer baseline window. | 60 |
+| `--imu-refresh` | Batch size for dashboard IMU signal updates. | 5 |
+| `--ui-refresh-ms` | Dashboard UI redraw interval. | 100ms |
+| `--rate-control` | Attempt to write sample-rate configuration to ring. | `no` |
+| `--equalize-mode` | Logic for handling rate mismatches (`off`, `log-only`, `enforce`). | `off` |
+| `--list-rings` | Scan and list available rings, then exit. | - |
+| `--discover` | Full GATT service discovery and characteristics dump. | - |
+
+---
+
 ## 🏗️ Architecture Overview
 
 The system follows an **Event-Driven / Producer-Consumer** model built on `asyncio`.
