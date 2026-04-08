@@ -215,13 +215,13 @@ Examples:
         default=10.0,
         help=(
             "Target stream rate used for diagnostics/equalization policy "
-            "(default: 10)"
+            "(Note: empirical multi-ring ceiling is ~16Hz, default: 10)"
         ),
     )
     parser.add_argument(
         "--force-hz",
         action="store_true",
-        help="Bypass the 10 Hz safety cap for multi-ring sessions (DANGER)",
+        help="Bypass the 16Hz hardware-safety cap for multi-ring sessions (DANGER)",
     )
     parser.add_argument(
         "--rate-control",
@@ -234,6 +234,22 @@ Examples:
         choices=["off", "log-only", "enforce"],
         default="log-only",
         help="Host-side equalization policy (default: log-only)",
+    )
+    parser.add_argument(
+        "--use-warmup",
+        action="store_true",
+        help="Enable 'Theory of Two' disconnect/reconnect warmup sequence",
+    )
+    parser.add_argument(
+        "--warmup-delay",
+        type=float,
+        default=3.0,
+        help="Delay in seconds after firmware warmup before full connect (default: 3.0)",
+    )
+    parser.add_argument(
+        "--reset-bt",
+        action="store_true",
+        help="Enable aggressive Windows BT radio reset if initial connection fails",
     )
     parser.add_argument(
         "--post-analysis",
@@ -294,24 +310,24 @@ Examples:
     if args.ring_addrs:
         target_addresses = [a.strip() for a in args.ring_addrs.split(",") if a.strip()]
 
-    # Multiple rings are unstable above 10 Hz
+    # Multiple rings are unstable above 16 Hz
     is_multi = args.monitor_all or len(target_addresses) > 1
-    if is_multi and args.target_hz and args.target_hz > 10:
+    if is_multi and args.target_hz and args.target_hz > 16:
         if args.force_hz:
             console.print(
                 f"\n[bold red]💀 DANGER: HIGH FREQUENCY SESSION FORCED "
                 f"({args.target_hz} Hz)[/bold red]\n"
-                f"Multi-ring sessions above 10 Hz are unstable and may "
+                f"Multi-ring sessions above 16 Hz are unstable and may "
                 f"freeze the ring firmware.\n"
             )
         else:
             console.print(
                 f"\n[bold yellow]⚠️  STABILITY WARNING:[/bold yellow] "
-                f"Multi-ring sessions are unstable above 10 Hz. "
+                f"Multi-ring sessions are unstable above 16 Hz. "
                 f"Capping [bold cyan]{args.target_hz} Hz[/bold cyan] -> "
-                f"[bold green]10 Hz[/bold green].\n"
+                f"[bold green]16 Hz[/bold green].\n"
             )
-            args.target_hz = 10
+            args.target_hz = 16
 
     if args.discover:
         connector = NuanicConnector(target_address=args.ring_addr)
@@ -358,6 +374,9 @@ Examples:
         equalize_mode=args.equalize_mode,
         attempt_ring_rate_control=(args.rate_control == "yes"),
         force_hz=args.force_hz,
+        use_warmup=args.use_warmup,
+        warmup_delay=args.warmup_delay,
+        allow_reset_bt=args.reset_bt,
     )
 
     explicit_addresses = _parse_ring_addresses(args.ring_addr, args.ring_addrs)

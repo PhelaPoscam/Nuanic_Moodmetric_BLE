@@ -101,6 +101,9 @@ class NuanicMonitor:
         equalize_mode: str = "off",
         attempt_ring_rate_control: bool = False,
         force_hz: bool = False,
+        use_warmup: bool = False,
+        warmup_delay: float = 3.0,
+        allow_reset_bt: bool = False,
     ):
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
@@ -115,6 +118,9 @@ class NuanicMonitor:
         self.target_hz = target_hz
         self.equalize_mode = equalize_mode
         self.attempt_ring_rate_control = attempt_ring_rate_control
+        self.use_warmup = use_warmup
+        self.warmup_delay = warmup_delay
+        self.allow_reset_bt = allow_reset_bt
 
         self.start_time: Optional[datetime] = None
         self.running = False
@@ -181,9 +187,21 @@ class NuanicMonitor:
         self.device_states[mac_key] = state
 
         if self.enable_logging:
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            safe_mac = mac_key.replace(":", "-")
-            state.log_file = self.log_dir / f"ring_{safe_mac}_{timestamp}.csv"
+            state.log_queue = asyncio.Queue(maxsize=5000)
+            # writer_task will be created lazily in _initialize_log_file
+
+        return state
+
+    def _initialize_log_file(self, state: RingDeviceState) -> None:
+        """Lazily initialize the CSV log file only when data starts arriving."""
+        if not self.enable_logging or state.log_file:
+            return
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        safe_mac = state.mac.replace(":", "-")
+        state.log_file = self.log_dir / f"ring_{safe_mac}_{timestamp}.csv"
+
+        try:
             with open(
                 state.log_file,
                 "w",
@@ -225,11 +243,11 @@ class NuanicMonitor:
                         "Equalize_WouldDrop",
                     ]
                 )
-
-            state.log_queue = asyncio.Queue(maxsize=5000)
+            print(f"[LOG] Started lazy log for {state.mac}: {state.log_file.name}")
             state.writer_task = asyncio.create_task(self._csv_writer_loop(state))
-
-        return state
+        except Exception as e:
+            print(f"[LOG] Error initializing log for {state.mac}: {e}")
+            state.log_file = None
 
     async def _csv_writer_loop(self, state: RingDeviceState) -> None:
         if not state.log_file or not state.log_queue:
@@ -264,6 +282,9 @@ class NuanicMonitor:
     def _enqueue_log(self, state: RingDeviceState, row: List[Any]) -> None:
         if not self.enable_logging or not state.log_queue:
             return
+
+        if not state.log_file:
+            self._initialize_log_file(state)
 
         try:
             state.log_queue.put_nowait(row)
@@ -597,8 +618,9 @@ class NuanicMonitor:
         state = self._ensure_device_state(mac)
         state.status = "connecting"
 
-        # Theory of Two: Firmware Warmup Sequence for all explicitly configured Hz requests
-        if self.target_hz and self.attempt_ring_rate_control:
+        # Optional Theory of Two: Firmware Warmup Sequence
+        had_warmup = False
+        if self.target_hz and self.attempt_ring_rate_control and self.use_warmup:
             print(
                 f"[WARMUP] Priming firmware for Rate Control ({self.target_hz}Hz) on {mac}..."
             )
@@ -609,15 +631,32 @@ class NuanicMonitor:
                     target_hz=int(self.target_hz),
                     address=mac,
                 )
-                print(f"[WARMUP] Releasing {mac} to complete prime sequence...")
+                print(
+                    f"[WARMUP] Releasing {mac} to complete prime sequence... (delay: {self.warmup_delay}s)"
+                )
                 await self.connector.disconnect(address=mac)
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(self.warmup_delay)
+                had_warmup = True
             else:
                 print(
                     f"[WARMUP] Failed initial prime connect for {mac}. Trying normal path."
                 )
 
         ok = await self.connector.connect_device(address=mac, device=device)
+
+        # Aggressive connection fallback if the OS link state is stuck
+        if not ok and self.allow_reset_bt:
+            print(
+                f"[RECOVERY] Connection failed for {mac}. Trying aggressive BT radio reset..."
+            )
+            await self.connector._reset_bluetooth_radio()
+            await asyncio.sleep(1.0)
+            ok = await self.connector.connect_device(address=mac, device=device)
+        elif not ok:
+            print(
+                f"[RECOVERY] Connection failed for {mac}. (Aggressive reset disabled)"
+            )
+
         if not ok:
             state.status = "disconnected"
             return False
@@ -681,7 +720,7 @@ class NuanicMonitor:
         # Hardware safety cap for multi-device sessions
         targets_count = len(ring_addresses or [])
         if monitor_all or targets_count > 1:
-            if self.target_hz and self.target_hz > 10:
+            if self.target_hz and self.target_hz > 16:
                 if self.force_hz:
                     print(
                         f"[DANGER] Multi-ring Hz safety cap bypassed "
@@ -689,10 +728,10 @@ class NuanicMonitor:
                     )
                 else:
                     print(
-                        f"[WARN] Multi-ring sessions are unstable above 10 Hz. "
-                        f"Capping {self.target_hz} Hz -> 10 Hz."
+                        f"[WARN] Multi-ring sessions are unstable above ~16 Hz due to hardware limitations. "
+                        f"Capping {self.target_hz} Hz -> 16.0 Hz."
                     )
-                    self.target_hz = 10.0
+                    self.target_hz = 16.0
 
         if not ring_addresses and not monitor_all:
             # Backward-compatible single selection flow.
