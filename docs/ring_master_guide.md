@@ -110,7 +110,7 @@ pip install -r requirements.txt
 
 ## 2.2 Recommended monitor run
 ```bash
-python scripts/ring_monitor_cli.py --duration 60
+python scripts/ring_monitor_cli.py --target-hz 16 --reset-bt --duration 60
 ```
 
 What one run does:
@@ -171,10 +171,12 @@ python scripts/ring_monitor_cli.py --ring-addr 58:A3:D0:95:DF:2D --duration 30
 
 Options:
 - `--duration SECONDS` (default: unlimited)
-- `--log-dir PATH` (default: `data/nuanic_logs`)
+- `--log-dir PATH` (default: `data/ring_logs`)
+- `--target-hz HZ` (default: 10.0, recommended max: 16.0)
+- `--reset-bt` (Aggressive Windows Bluetooth reset)
 - `--imu-refresh N` (default: 5)
 - `--no-clear`
-- `--ring-addr ADDR`
+- `--ring-addrs ADDRS` (Compatible comma-separated list)
 - `--list-rings`
 
 ## 3.3 `nuanic_analyzer_cli.py` (file analysis)
@@ -215,10 +217,10 @@ if await connector.connect():
 
 ## 4.3 Monitor example
 ```python
-from awe_polar.ring_device import NuanicMonitor
+from nuanic_ring.monitor import NuanicMonitor
 
-monitor = NuanicMonitor()
-await monitor.start_monitoring()
+monitor = NuanicMonitor(target_hz=16)
+await monitor.run(duration_seconds=60)
 stress = monitor.get_current_stress()  # 0-100%
 ```
 
@@ -378,11 +380,11 @@ Example table (illustrative):
 
 ## 7. Session Findings and Reports (Consolidated)
 
-## 7.1 Dual-stream architecture findings
-A major report identified two simultaneous streams:
-- `d306262b`: ~15.87 Hz, 16-byte IMU packets
-- `468f2717`: ~1.12 Hz, 92-byte physiology packets
-- Effective interleaving near 16.8 Hz total
+## 7.1 Multi-stream architecture findings
+Recent sessions confirmed two simultaneous streams:
+- `d306262b`: ~16.0 Hz (IMU stream)
+- `468f2717`: ~1.1 Hz (Physiology/Stress stream)
+- Total effective bandwidth caps at ~17.1 data-events per second. attempting >16 Hz on the IMU stream often leads to firmware instability.
 
 ## 7.2 IMU verification findings
 - ACC fields in bytes 8-13 behaved as expected (signed int16).

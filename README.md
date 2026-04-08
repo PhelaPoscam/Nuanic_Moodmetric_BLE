@@ -154,7 +154,8 @@ from nuanic_ring.monitor import NuanicMonitor
 
 async def run_sensor():
     monitor = NuanicMonitor(calibration_seconds=60)
-    await monitor.start_monitoring(duration_seconds=120)
+    # Run the monitor for 120 seconds
+    await monitor.run(duration_seconds=120)
 
 asyncio.run(run_sensor())
 ```
