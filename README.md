@@ -36,10 +36,10 @@ python scripts/ring_monitor_cli.py --waveform --calibration-seconds 60
 python scripts/ring_monitor_cli.py --monitor-all --calibration-seconds 15
 
 # Explicit two-ring monitoring by MAC addresses
-python scripts/ring_monitor_cli.py --ring-addrs 41:09:FB:6B:95:8D,69:1D:C9:2E:19:64 --duration 30
+python scripts/ring_monitor_cli.py --ring-addrs 41:09:FB:6B:95:8D,69:1D:C9:2E:19:64 --duration 120 --target-hz 16 --reset-bt
 
 # Run a short session and auto-print DNE-vs-computed score analysis
-python scripts/ring_monitor_cli.py --monitor-all --duration 30 --post-analysis yes
+python scripts/ring_monitor_cli.py --monitor-all --duration 60 --post-analysis yes
 
 # Discover exactly which proprietary GATT profile is active on your ring
 python scripts/ring_monitor_cli.py --discover
@@ -128,20 +128,20 @@ python scripts/ring_post_analysis_cli.py --log-dir data/ring_logs --latest 2
 
 ---
 
-## 🔬 Empirical Rate Findings (Dual-Ring)
+## 🔬 Empirical Rate Findings & Connection Stability
 
 From repeated paired-ring sessions (same command pattern, two MACs), the
-current observed behavior is:
+observed behavior on the Nuanic hardware is:
 
-1. **Stable in paired mode:** `target-hz 5` and `target-hz 10`
-2. **Unstable/inconclusive in paired mode:** `target-hz 15` and `target-hz 25`
-3. The D306 stream follows requested rates when stable; the 468F stream remains
-  near `~1 Hz` and should be treated as a separate low-rate channel.
+1. **Hardware Rate Ceiling:** Multi-ring environments hit a hard capability wall at **~16.0 Hz**. The firmware struggles with higher frequencies (like 25 Hz), dropping sync and eventually crashing. We've capped the default safety limits at 16 Hz.
+2. **Setup Stabilization:** The rings do not necessarily require complex "disconnect/reconnect" warmup phases. They just need around **30-90 seconds** after the initial connection to stabilize internally, acknowledge the requested rate, and begin broadcasting steady payload buffers.
+3. **Lazy Logging:** To prevent storing 90 seconds of empty "ramp-up" data, the monitor uses **Lazy Logging**. CSV files are only actively created and written to when the first true payload broadcast is captured.
+4. **Bluetooth Hang Recovery (`--reset-bt`)**: Under heavy loads on Windows, WinRT links can "ghost". If the initial ring connection fails, passing `--reset-bt` lets the orchestrator immediately trigger an aggressive Windows radio-level cycle, ensuring the phantom link drops and the ring is securely connected on retry.
 
-Recommended default for two-ring captures:
+Recommended robust default for two-ring capture at max frequency:
 
 ```bash
-python scripts/ring_monitor_cli.py --ring-addrs <MAC1>,<MAC2> --target-hz 10 --rate-control yes --equalize-mode log-only
+python scripts/ring_monitor_cli.py --ring-addrs <MAC1>,<MAC2> --target-hz 16 --reset-bt --duration 120
 ```
 
 ---

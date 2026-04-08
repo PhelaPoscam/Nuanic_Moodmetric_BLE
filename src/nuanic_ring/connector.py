@@ -129,12 +129,17 @@ class NuanicConnector:
                 print("[BT-RESET] No Bluetooth radio found.")
                 return False
 
-            print("[BT-RESET] Turning Bluetooth off...", end=" ", flush=True)
-            await bt_radio.set_state_async(radios_winrt.RadioState.OFF)
-            await asyncio.sleep(1.5)
-            print("on...", end=" ", flush=True)
-            await bt_radio.set_state_async(radios_winrt.RadioState.ON)
-            await asyncio.sleep(2.5)  # give stack time to re-initialize
+            if bt_radio.state != radios_winrt.RadioState.OFF:
+                print("[BT-RESET] Turning Bluetooth off...", end=" ", flush=True)
+                await bt_radio.set_state_async(radios_winrt.RadioState.OFF)
+                await asyncio.sleep(1.5)
+            else:
+                print("[BT-RESET] Bluetooth is already off...", end=" ", flush=True)
+
+            if bt_radio.state != radios_winrt.RadioState.ON:
+                print("turning on...", end=" ", flush=True)
+                await bt_radio.set_state_async(radios_winrt.RadioState.ON)
+                await asyncio.sleep(2.5)  # give stack time to re-initialize
             print("[OK]")
             return True
         except Exception as e:
@@ -577,16 +582,23 @@ class NuanicConnector:
                 "confidence": "low",
             }
 
-    async def _cleanup_client(self):
+    async def _cleanup_client(self, address: Optional[str] = None):
         """Strict cleanup of existing BLE client state to prevent zombie connections."""
-        if getattr(self, "client", None) is None:
+        target_client = self.clients.get(address.upper()) if address else self.client
+        if target_client is None:
             return
 
         import gc
 
         try:
-            if getattr(self.client, "is_connected", False):
-                self._disconnect_event.clear()
+            if getattr(target_client, "is_connected", False):
+                if not address:
+                    self._disconnect_event.clear()
+                else:
+                    event = self._disconnect_events.get(address.upper())
+                    if event:
+                        event.clear()
+
                 # Explicitly attempt to stop notifications before disconnecting
                 # to help Windows clear the GATT cache cleanly.
                 for char_uuid in [
@@ -596,16 +608,25 @@ class NuanicConnector:
                     self.MYSTERY_NOTIFY_CHARACTERISTIC,
                 ]:
                     try:
-                        await self.client.stop_notify(char_uuid)
+                        await target_client.stop_notify(char_uuid)
                     except Exception:
                         pass
 
-                print("[CLEANUP] Disconnecting BleakClient...")
-                await self.client.disconnect()
+                print(
+                    f"[CLEANUP] Disconnecting BleakClient{' for ' + address if address else ''}..."
+                )
+                await target_client.disconnect()
 
                 # Wait explicitly for the disconnected_callback to fire
                 try:
-                    await asyncio.wait_for(self._disconnect_event.wait(), timeout=5.0)
+                    if not address:
+                        await asyncio.wait_for(
+                            self._disconnect_event.wait(), timeout=5.0
+                        )
+                    else:
+                        event = self._disconnect_events.get(address.upper())
+                        if event:
+                            await asyncio.wait_for(event.wait(), timeout=5.0)
                     print("[CLEANUP] OS confirmed disconnect.")
                 except asyncio.TimeoutError:
                     print("[CLEANUP] Warning: OS disconnect callback timed out.")
@@ -616,27 +637,30 @@ class NuanicConnector:
             if platform.system() == "Windows":
                 try:
                     # Explicitly close internal WinRT handles to drop the ACL link
-                    if hasattr(self.client, "_backend"):
+                    if hasattr(target_client, "_backend"):
                         if (
-                            hasattr(self.client._backend, "_session")
-                            and self.client._backend._session
+                            hasattr(target_client._backend, "_session")
+                            and target_client._backend._session
                         ):
-                            self.client._backend._session.close()
+                            target_client._backend._session.close()
                         if (
-                            hasattr(self.client._backend, "_device")
-                            and self.client._backend._device
+                            hasattr(target_client._backend, "_device")
+                            and target_client._backend._device
                         ):
-                            self.client._backend._device.close()
+                            target_client._backend._device.close()
                 except Exception:
                     pass
 
             # Break circular reference (self -> client -> disconnected_callback -> self)
             try:
-                self.client.set_disconnected_callback(None)
+                target_client.set_disconnected_callback(None)
             except Exception:
                 pass
 
-            self.client = None
+            if not address:
+                self.client = None
+            else:
+                self.clients.pop(address.upper(), None)
 
             # Force garbage collector to release lingering COM objects before process exits
             gc.collect()
@@ -941,28 +965,26 @@ class NuanicConnector:
         """
         if address:
             address = address.upper()
-            client = self.clients.get(address)
-            if client:
+            if address in self.clients:
                 try:
-                    await client.disconnect()
-                    print("[OK] Disconnected")
+                    await self._cleanup_client(address)
                 except Exception:
                     pass
                 finally:
-                    self.clients.pop(address, None)
                     self.devices.pop(address, None)
+                    # self.clients.pop happens in _cleanup_client
+                print(f"[OK] Disconnected {address}")
         else:
             had_any = False
-            for addr, client in list(self.clients.items()):
-                if client:
-                    had_any = True
-                    try:
-                        await client.disconnect()
-                    except Exception:
-                        pass
-                    finally:
-                        self.clients.pop(addr, None)
-                        self.devices.pop(addr, None)
+            for addr in list(self.clients.keys()):
+                had_any = True
+                try:
+                    await self._cleanup_client(addr)
+                except Exception:
+                    pass
+                finally:
+                    self.devices.pop(addr, None)
+                    # self.clients.pop happens in _cleanup_client
 
             if self.client:
                 was_connected = bool(getattr(self.client, "is_connected", False))
