@@ -757,19 +757,22 @@ class NuanicMonitor:
             return True
 
         # Multi-device path.
-        discovered: List[Dict[str, Any]] = (
-            await self.connector.discover_all_matching_rings(
-                include_device=True,
-                scan_timeout=6.0,
-                attempts=3,
-                retry_delay=0.5,
-            )
-        )
-        discovered_by_mac = {d["address"].upper(): d for d in discovered}
-
         targets = [a.upper() for a in (ring_addresses or [])]
-        if monitor_all and not targets:
-            targets = list(discovered_by_mac.keys())
+        discovered_by_mac = {}
+
+        if monitor_all or not targets:
+            discovered: List[Dict[str, Any]] = (
+                await self.connector.discover_all_matching_rings(
+                    include_device=True,
+                    scan_timeout=6.0,
+                    attempts=3,
+                    retry_delay=0.5,
+                )
+            )
+            discovered_by_mac = {d["address"].upper(): d for d in discovered}
+            if not targets:
+                targets = list(discovered_by_mac.keys())
+
         if max_devices is not None:
             targets = targets[: max(0, max_devices)]
 
@@ -857,7 +860,7 @@ class NuanicMonitor:
                 else "N/A"
             )
             rate_hz = f"{state.d306_observed_hz:.1f}/{state.imu_observed_hz:.1f}"
-            hb_mark = "●" if state.heartbeat_tick else " "
+            hb_mark = "*" if state.heartbeat_tick else " "
             rate_hz = f"{hb_mark} {rate_hz}"
 
             imu_x, imu_y, imu_z = state.imu_xyz
