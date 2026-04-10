@@ -26,7 +26,9 @@ class NuanicConnector:
     SET_TIME_UUID = (
         "dc9c31a7-fbd3-467a-8777-10900c423d3b"  # Writable config / timestamp register
     )
-    SAMPLE_RATE_UUID = "516b0fb6-d861-4619-9dd0-0105e8b85128"  # Writable config register (rate-write effect unproven)
+    SAMPLE_RATE_UUID = (
+        "516b0fb6-d861-4619-9dd0-0105e8b85128"  # Writable config register (proven)
+    )
     STORAGE_FORMAT_UUID = (
         "3cce21a7-e602-4e02-8c52-1e0366c1c846"  # Writable config register
     )
