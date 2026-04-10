@@ -19,14 +19,20 @@ class NuanicConnector:
     """Handles BLE connections to one or many Nuanic/Moodmetric rings."""
 
     # GATT UUIDs (Verified best-fit interpretations as of 2026-04)
-    STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"         # Off-finger / on-finger state indicator stream
-    STORAGE_UUID = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"       # Historical storage / buffer characteristic
-    LIVE_EDA_UUID = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"      # Live notify stream (currently no reliable payload)
-    LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"      # High-rate motion / physiology stream (IMU/EDM)
-    SET_TIME_UUID = "dc9c31a7-fbd3-467a-8777-10900c423d3b"      # Writable config / timestamp register
-    SAMPLE_RATE_UUID = "516b0fb6-d861-4619-9dd0-0105e8b85128"   # Writable config register (rate-write effect unproven)
-    STORAGE_FORMAT_UUID = "3cce21a7-e602-4e02-8c52-1e0366c1c846" # Writable config register
-    BATTERY_UUID = "00002a19-0000-1000-8000-00805f9b34fb"       # Standard BLE Battery Service
+    STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # Off-finger / on-finger state indicator stream
+    STORAGE_UUID = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"  # Historical storage / buffer characteristic
+    LIVE_EDA_UUID = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"  # Live notify stream (currently no reliable payload)
+    LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # High-rate motion / physiology stream (IMU/EDM)
+    SET_TIME_UUID = (
+        "dc9c31a7-fbd3-467a-8777-10900c423d3b"  # Writable config / timestamp register
+    )
+    SAMPLE_RATE_UUID = "516b0fb6-d861-4619-9dd0-0105e8b85128"  # Writable config register (rate-write effect unproven)
+    STORAGE_FORMAT_UUID = (
+        "3cce21a7-e602-4e02-8c52-1e0366c1c846"  # Writable config register
+    )
+    BATTERY_UUID = (
+        "00002a19-0000-1000-8000-00805f9b34fb"  # Standard BLE Battery Service
+    )
 
     # Backward-compatible aliases used across the existing telemetry code.
     BATTERY_CHARACTERISTIC = BATTERY_UUID
@@ -243,7 +249,8 @@ class NuanicConnector:
             return ""
         # Keep only hex digits and colons. Strip everything else.
         import re
-        clean = re.sub(r'[^0-9A-Fa-f:]', '', addr)
+
+        clean = re.sub(r"[^0-9A-Fa-f:]", "", addr)
         return clean.upper()
 
     def _sanitize_name(self, name: str) -> str:
@@ -262,7 +269,9 @@ class NuanicConnector:
     ):
         """Scan and return list of all available Nuanic rings."""
         if not stop_if_found:
-            print(f"[SCAN] Discovering Nuanic rings (timeout: {scan_timeout}s, attempts: {attempts})...")
+            print(
+                f"[SCAN] Discovering Nuanic rings (timeout: {scan_timeout}s, attempts: {attempts})..."
+            )
 
         from nuanic_ring.ring_profiles import (
             NUANIC_SERVICE_UUID,
@@ -274,19 +283,21 @@ class NuanicConnector:
             for attempt in range(1, max(1, attempts) + 1):
                 if attempts > 1 and not stop_if_found:
                     print(f"[SCAN] Attempt {attempt}/{attempts}...")
-                
+
                 # Use discover(return_adv=True) for a thorough window
                 devices_map = await BleakScanner.discover(
                     timeout=max(2.0, scan_timeout), return_adv=True
                 )
-                
+
                 for device, adv in devices_map.values():
                     name = device.name or ""
                     clean_name = self._sanitize_name(name)
-                    
+
                     adv_uuids = [u.lower() for u in adv.service_uuids]
-                    
-                    is_nuanic = "Nuanic" in name or NUANIC_SERVICE_UUID.lower() in adv_uuids
+
+                    is_nuanic = (
+                        "Nuanic" in name or NUANIC_SERVICE_UUID.lower() in adv_uuids
+                    )
                     is_moodmetric = "Moodmetric" in name or any(
                         u.lower() in adv_uuids for u in MOODMETRIC_SERVICE_UUIDS
                     )
@@ -294,13 +305,17 @@ class NuanicConnector:
                     if is_nuanic or is_moodmetric:
                         addr_raw = device.address or ""
                         addr = self._sanitize_address(addr_raw)
-                        
+
                         if not addr:
                             continue
 
                         entry = {
                             "address": addr,
-                            "name": clean_name if clean_name else ("Nuanic" if is_nuanic else "Moodmetric"),
+                            "name": (
+                                clean_name
+                                if clean_name
+                                else ("Nuanic" if is_nuanic else "Moodmetric")
+                            ),
                         }
                         if include_device:
                             entry["device"] = device
@@ -308,7 +323,7 @@ class NuanicConnector:
 
                 if stop_if_found and merged:
                     break
-                
+
                 if attempt < attempts:
                     await asyncio.sleep(retry_delay)
 
@@ -360,19 +375,22 @@ class NuanicConnector:
                 addr_raw = (parts[1] or "").strip().upper()
                 if not name_raw:
                     continue
-                if "NUANIC" not in name_raw.upper() and "MOODMETRIC" not in name_raw.upper():
+                if (
+                    "NUANIC" not in name_raw.upper()
+                    and "MOODMETRIC" not in name_raw.upper()
+                ):
                     continue
-                
+
                 name = self._sanitize_name(name_raw)
                 addr = self._sanitize_address(addr_raw)
-                
+
                 if not addr:
                     continue
-                    
+
                 # Standardize 12-char paired addresses into XX:XX:XX...
                 if len(addr) == 12 and ":" not in addr:
                     addr = ":".join(addr[i : i + 2] for i in range(0, 12, 2))
-                    
+
                 rings.append(
                     {"address": addr, "name": name, "source": "windows-paired"}
                 )
@@ -398,7 +416,7 @@ class NuanicConnector:
             retry_delay=1.0,
         )
         paired = self._get_windows_paired_rings()
-        
+
         merged = {}
         # Scanned results take priority because they contain active BleakDevice objects
         for ring in scanned:

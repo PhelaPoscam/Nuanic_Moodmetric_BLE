@@ -371,7 +371,9 @@ Examples:
             console.print("[yellow][WARN] No compatible rings found[/yellow]")
             return
 
-        console.print(f"\nFound {len(rings)} ring(s) [Attempts: {args.scan_attempts}, Window: {args.scan_timeout}s]:")
+        console.print(
+            f"\nFound {len(rings)} ring(s) [Attempts: {args.scan_attempts}, Window: {args.scan_timeout}s]:"
+        )
         for i, ring in enumerate(rings, 1):
             source = ring.get("source", "scan")
             console.print(f"  {i}. {ring['name']:20} | {ring['address']} | {source}")
