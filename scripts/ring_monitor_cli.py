@@ -280,14 +280,14 @@ Examples:
     parser.add_argument(
         "--scan-timeout",
         type=float,
-        default=5.0,
-        help="Timeout per scan attempt in seconds (default: 5.0)",
+        default=6.0,
+        help="Timeout per scan attempt in seconds (default: 6.0)",
     )
     parser.add_argument(
         "--scan-attempts",
         type=int,
-        default=2,
-        help="Number of scan attempts to perform (default: 2)",
+        default=3,
+        help="Number of scan attempts to perform (default: 3)",
     )
     parser.add_argument(
         "--deep-scan",
@@ -358,11 +358,6 @@ Examples:
         return
 
     if args.list_rings:
-        # Override with deep scan settings if requested
-        if args.deep_scan:
-            args.scan_timeout = 6.0
-            args.scan_attempts = 3
-
         connector = NuanicConnector()
         rings = await connector.list_available_rings_with_paired(
             scan_timeout=args.scan_timeout, attempts=args.scan_attempts
