@@ -42,6 +42,7 @@ class NuanicConnector:
     STATE_CHARACTERISTIC = STATE_UUID
     RAW_EDA_CHARACTERISTIC = STATE_CHARACTERISTIC
     MYSTERY_NOTIFY_CHARACTERISTIC = LIVE_EDA_UUID
+    STRESS_CHARACTERISTIC = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # 92-byte bulk waveform/motion stream (~1 Hz)
 
     def __init__(
         self,
