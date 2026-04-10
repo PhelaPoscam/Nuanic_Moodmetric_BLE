@@ -228,5 +228,5 @@ The current code keeps the old UUIDs, but the verified best-fit meanings are:
 | `42dcb71b-1817-43bd-8ea3-7272780a1c9f` | `LIVE_EDA_UUID` | Live notify stream (currently no reliable payload) |
 | `d306262b-c8c9-4c4b-9050-3a41dea706e5` | `LIVE_DNA_UUID` / IMU stream | High-rate motion / physiology stream |
 | `dc9c31a7-fbd3-467a-8777-10900c423d3b` | `SET_TIME_UUID` | Writable config/timestamp register |
-| `516b0fb6-d861-4619-9dd0-0105e8b85128` | `SAMPLE_RATE_UUID` | Writable config register; rate-write effect still unproven |
+| `516b0fb6-d861-4619-9dd0-0105e8b85128` | `SAMPLE_RATE_UUID` | Writable config register; rate-write effect is proven |
 | `3cce21a7-e602-4e02-8c52-1e0366c1c846` | `STORAGE_FORMAT_UUID` | Writable config register |
