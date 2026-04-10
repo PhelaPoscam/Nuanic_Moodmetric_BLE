@@ -275,7 +275,24 @@ Examples:
     parser.add_argument(
         "--discover",
         action="store_true",
-        help=("Discover all ring services/characteristics " "for one target and exit"),
+        help="Discover all ring services/characteristics for one target and exit",
+    )
+    parser.add_argument(
+        "--scan-timeout",
+        type=float,
+        default=5.0,
+        help="Timeout per scan attempt in seconds (default: 5.0)",
+    )
+    parser.add_argument(
+        "--scan-attempts",
+        type=int,
+        default=2,
+        help="Number of scan attempts to perform (default: 2)",
+    )
+    parser.add_argument(
+        "--deep-scan",
+        action="store_true",
+        help="Perform a very thorough scan (3 attempts, 6s each)",
     )
 
     parser.add_argument(
@@ -315,14 +332,14 @@ Examples:
     if is_multi and args.target_hz and args.target_hz > 16:
         if args.force_hz:
             console.print(
-                f"\n[bold red]💀 DANGER: HIGH FREQUENCY SESSION FORCED "
+                f"\n[bold red]DANGER: HIGH FREQUENCY SESSION FORCED "
                 f"({args.target_hz} Hz)[/bold red]\n"
                 f"Multi-ring sessions above 16 Hz are unstable and may "
                 f"freeze the ring firmware.\n"
             )
         else:
             console.print(
-                f"\n[bold yellow]⚠️  STABILITY WARNING:[/bold yellow] "
+                f"\n[bold yellow]STABILITY WARNING:[/bold yellow] "
                 f"Multi-ring sessions are unstable above 16 Hz. "
                 f"Capping [bold cyan]{args.target_hz} Hz[/bold cyan] -> "
                 f"[bold green]16 Hz[/bold green].\n"
@@ -341,13 +358,20 @@ Examples:
         return
 
     if args.list_rings:
+        # Override with deep scan settings if requested
+        if args.deep_scan:
+            args.scan_timeout = 6.0
+            args.scan_attempts = 3
+
         connector = NuanicConnector()
-        rings = await connector.list_available_rings_with_paired()
+        rings = await connector.list_available_rings_with_paired(
+            scan_timeout=args.scan_timeout, attempts=args.scan_attempts
+        )
         if not rings:
             console.print("[yellow][WARN] No compatible rings found[/yellow]")
             return
 
-        console.print(f"\nFound {len(rings)} ring(s):")
+        console.print(f"\nFound {len(rings)} ring(s) [Attempts: {args.scan_attempts}, Window: {args.scan_timeout}s]:")
         for i, ring in enumerate(rings, 1):
             source = ring.get("source", "scan")
             console.print(f"  {i}. {ring['name']:20} | {ring['address']} | {source}")
