@@ -9,15 +9,26 @@
 import argparse
 import asyncio
 import sys
-from pathlib import Path
 from typing import Any, Dict, List
 
 from rich.console import Console  # type: ignore[import-not-found]
 from rich.live import Live  # type: ignore[import-not-found]
 from rich.table import Table  # type: ignore[import-not-found]
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+def _stdout_encoding_is_utf8() -> bool:
+    encoding = (sys.stdout.encoding or "").lower()
+    return encoding == "utf-8"
+
+
+# --- Global Encoding Fix for Windows ---
+if sys.platform == "win32":
+    try:
+        if not _stdout_encoding_is_utf8():
+            sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+# ----------------------------------------
 
 def _parse_ring_addresses(
     ring_addr: str,
@@ -43,9 +54,11 @@ def _parse_ring_addresses(
 def _build_dashboard_table(
     rows: List[Dict[str, Any]],
     elapsed_seconds: float,
+    box_style: Any = None,
 ):
     table = Table(
-        title=("Nuanic Multi-Ring Dashboard" f"  |  Elapsed: {elapsed_seconds:.1f}s")
+        title=("Nuanic Multi-Ring Dashboard" f"  |  Elapsed: {elapsed_seconds:.1f}s"),
+        box=box_style,
     )
     table.add_column("Device MAC", style="cyan")
     table.add_column("Connection Status", style="magenta")
@@ -90,15 +103,7 @@ def _build_dashboard_table(
     return table
 
 
-async def main():
-    from nuanic_ring.connector import NuanicConnector
-    from nuanic_ring.monitor import NuanicMonitor
-    from nuanic_ring.post_analysis import (
-        analyze_latest_ring_logs,
-        format_analysis_report,
-    )
-    from nuanic_ring.waveform_viewer import run_waveform_viewer
-
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Real-time ring monitor (single or multi-ring)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -289,11 +294,6 @@ Examples:
         default=3,
         help="Number of scan attempts to perform (default: 3)",
     )
-    parser.add_argument(
-        "--deep-scan",
-        action="store_true",
-        help="Perform a very thorough scan (3 attempts, 6s each)",
-    )
 
     parser.add_argument(
         "--waveform",
@@ -320,8 +320,38 @@ Examples:
         help="Waveform mode: smoothing window size",
     )
 
+    return parser
+
+
+async def main():
+    try:
+        from nuanic_ring.connector import NuanicConnector
+        from nuanic_ring.monitor import NuanicMonitor
+        from nuanic_ring.post_analysis import (
+            analyze_latest_ring_logs,
+            format_analysis_report,
+        )
+        from nuanic_ring.waveform_viewer import run_waveform_viewer
+    except ModuleNotFoundError:
+        print(
+            "[ERROR] Could not import 'nuanic_ring'. "
+            "Install the project first: pip install -e .[dev]"
+        )
+        return
+
+    parser = build_parser()
+
+    # On Windows, force ASCII box-characters if the environment is not UTF-8 capable,
+    # or if we want maximum robustness.
+    box_style = None
+    ascii_box = None
+    if sys.platform == "win32" and not _stdout_encoding_is_utf8():
+        from rich import box
+        box_style = box.ASCII
+        ascii_box = box.ASCII
+
     args = parser.parse_args()
-    console = Console()
+    console = Console(force_terminal=True, soft_wrap=True)
 
     target_addresses = []
     if args.ring_addrs:
@@ -418,6 +448,8 @@ Examples:
         max_devices=args.max_devices,
         stagger_delay=max(0.0, args.stagger_delay),
         auto_reconnect=args.auto_reconnect,
+        scan_timeout=args.scan_timeout,
+        scan_attempts=args.scan_attempts,
     )
 
     if not started:
@@ -435,7 +467,22 @@ Examples:
             while True:
                 elapsed = asyncio.get_event_loop().time() - started_at
                 rows = monitor.dashboard_rows()
-                live.update(_build_dashboard_table(rows, elapsed))
+                try:
+                    table = _build_dashboard_table(rows, elapsed, box_style=box_style)
+                    live.update(table)
+                except UnicodeEncodeError:
+                    # Fallback for stray unicode characters in rows
+                    safe_rows = []
+                    for r in rows:
+                        sr = {k: ("".join(c for c in str(v) if ord(c) < 128) if isinstance(v, str) else v) for k, v in r.items()}
+                        safe_rows.append(sr)
+                    live.update(
+                        _build_dashboard_table(
+                            safe_rows,
+                            elapsed,
+                            box_style=(ascii_box if sys.platform == "win32" else None),
+                        )
+                    )
 
                 if args.duration is not None and elapsed >= args.duration:
                     break

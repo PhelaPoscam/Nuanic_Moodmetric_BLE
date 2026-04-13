@@ -15,20 +15,24 @@ import sys
 import time
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, Optional
 import platform
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from nuanic_ring.connector import NuanicConnector
-from nuanic_ring.ring_profiles import (
-    MOODMETRIC_PROFILE,
-    NUANIC_PROFILE,
-    UNKNOWN_PROFILE,
-    detect_ring_profile_from_service_uuids,
-    notify_uuids_for_profile,
-)
+try:
+    from nuanic_ring.connector import NuanicConnector
+    from nuanic_ring.ring_profiles import (
+        MOODMETRIC_PROFILE,
+        NUANIC_PROFILE,
+        UNKNOWN_PROFILE,
+        detect_ring_profile_from_service_uuids,
+        notify_uuids_for_profile,
+    )
+except ModuleNotFoundError:
+    print(
+        "[ERROR] Could not import 'nuanic_ring'. "
+        "Install the project first: pip install -e .[dev]"
+    )
+    raise SystemExit(1)
 
 SERVICE_UUID = "5491faaf-b0c2-4167-8f3d-bc6b31db69e7"
 BUFFER_CHAR = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"

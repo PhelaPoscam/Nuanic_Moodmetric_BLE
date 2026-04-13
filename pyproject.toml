@@ -24,9 +24,15 @@ dev = [
     "black>=23.0"
 ]
 
+[project.scripts]
+nuanic-ring-monitor = "nuanic_ring.cli_entrypoints:ring_monitor"
+nuanic-ring-analyzer = "nuanic_ring.cli_entrypoints:ring_analyzer"
+nuanic-ring-post-analysis = "nuanic_ring.cli_entrypoints:ring_post_analysis"
+nuanic-ring-discover = "nuanic_ring.cli_entrypoints:ring_discover_services"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.black]
 line-length = 88
-target-version = ['py38']
+target-version = ['py310']
