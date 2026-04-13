@@ -26,34 +26,22 @@ pip install -e ".[dev]"
 ### 2. Connect & Monitor
 
 ```bash
-# Installed console command (recommended)
+# Quick start
 nuanic-ring-monitor --calibration-seconds 60
 
-# Monitor the first matched ring and log to CSV with arousal scoring
-python scripts/ring_monitor_cli.py --calibration-seconds 60
+# Live dashboard visualization
+nuanic-ring-monitor --waveform --calibration-seconds 60
 
-# Live EDA + Arousal Score GUI dashboard
-python scripts/ring_monitor_cli.py --waveform --calibration-seconds 60
+# Monitor all discovered rings
+nuanic-ring-monitor --monitor-all --calibration-seconds 15
 
-# Monitor all visible rings at once
-python scripts/ring_monitor_cli.py --monitor-all --calibration-seconds 15
+# Multi-ring by MAC addresses
+nuanic-ring-monitor --ring-addrs MAC1,MAC2 --target-hz 16
 
-# Explicit two-ring monitoring by MAC addresses
-python scripts/ring_monitor_cli.py --ring-addrs 41:09:FB:6B:95:8D,69:1D:C9:2E:19:64 --duration 120 --target-hz 16 --reset-bt
+# Session with analysis (DNE vs computed score)
+nuanic-ring-monitor --monitor-all --duration 60 --post-analysis yes
 
-# Run a short session and auto-print DNE-vs-computed score analysis
-python scripts/ring_monitor_cli.py --monitor-all --duration 60 --post-analysis yes
-
-# Discover exactly which proprietary GATT profile is active on your ring
-python scripts/ring_monitor_cli.py --discover
-
-# Offline analysis of a recorded session CSV
-python scripts/ring_analyzer_cli.py data/ring_logs/my_session.csv
-
-# Quick analysis over latest 2 ring CSVs
-python scripts/ring_post_analysis_cli.py --latest 2
-
-# Equivalent installed commands
+# Offline analysis
 nuanic-ring-analyzer data/ring_logs/my_session.csv
 nuanic-ring-post-analysis --latest 2
 nuanic-ring-discover --ring-addr 56:C2:72:F2:07:04 --profile-seconds 15
