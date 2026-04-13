@@ -26,6 +26,9 @@ pip install -e ".[dev]"
 ### 2. Connect & Monitor
 
 ```bash
+# Installed console command (recommended)
+nuanic-ring-monitor --calibration-seconds 60
+
 # Monitor the first matched ring and log to CSV with arousal scoring
 python scripts/ring_monitor_cli.py --calibration-seconds 60
 
@@ -49,30 +52,28 @@ python scripts/ring_analyzer_cli.py data/ring_logs/my_session.csv
 
 # Quick analysis over latest 2 ring CSVs
 python scripts/ring_post_analysis_cli.py --latest 2
+
+# Equivalent installed commands
+nuanic-ring-analyzer data/ring_logs/my_session.csv
+nuanic-ring-post-analysis --latest 2
+nuanic-ring-discover --ring-addr 56:C2:72:F2:07:04 --profile-seconds 15
 ```
 
 ---
 
 ## 🔗 Multi-Ring Setup
 
-The SDK is optimized for simultaneous capture from multiple rings. You can target specific devices by their MAC addresses to guarantee a stable session.
-
 ### Explicit Targeting
-Use the `--ring-addrs` flag with a comma-separated list of MAC addresses:
 ```bash
-python scripts/ring_monitor_cli.py --ring-addrs MAC1,MAC2 --target-hz 16 --reset-bt
+nuanic-ring-monitor --ring-addrs MAC1,MAC2 --target-hz 16 --reset-bt
 ```
 
 ### Auto-Discovery
-To connect to every Nuanic ring found in the area:
 ```bash
-python scripts/ring_monitor_cli.py --monitor-all --target-hz 16
+nuanic-ring-monitor --monitor-all --target-hz 16
 ```
 
-### Connection Stability Tips
-- **Ramp-up Time**: Rings require 30–90 seconds to stabilize their internal buffers. **Lazy Logging** ensures your CSV files only start once real data is flowing.
-- **Bluetooth Reset**: If Windows fails to find a ring due to a "ghost" ACL link, use `--reset-bt` to force an OS-level radio toggle on the first failure.
-- **Stagger Delay**: Use `--stagger-delay 2.0` if you experience connection collisions when starting 3+ rings.
+For troubleshooting details, profile-specific notes, and connection recovery strategy, see `docs/ring_master_guide.md`.
 
 ---
 
@@ -91,63 +92,19 @@ python scripts/ring_monitor_cli.py --monitor-all --target-hz 16
 | `--waveform` | Launch live Matplotlib plots instead of the TUI table. | False |
 | `--post-analysis` | Print a scoring comparison vs proprietary DNE on exit. | No |
 | `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
-| `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.0 |
+| `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.25 |
 | `--auto-reconnect` | Automaticaly retry on connection drop. | True |
 | `--calibration-seconds` | Wait time for Arousal Scorer baseline window. | 60 |
 | `--imu-refresh` | Batch size for dashboard IMU signal updates. | 5 |
-| `--ui-refresh-ms` | Dashboard UI redraw interval. | 100ms |
-| `--rate-control` | Attempt to write sample-rate configuration to ring. | `no` |
-| `--equalize-mode` | Logic for handling rate mismatches (`off`, `log-only`, `enforce`). | `off` |
+| `--ui-refresh-ms` | Dashboard UI redraw interval. | 200ms |
+| `--rate-control` | Attempt to write sample-rate configuration to ring. | `yes` |
+| `--equalize-mode` | Logic for handling rate mismatches (`off`, `log-only`, `enforce`). | `log-only` |
+| `--max-devices` | Cap the number of simultaneously monitored rings. | None |
+| `--scan-timeout` | Timeout per scan attempt. | 6.0s |
+| `--scan-attempts` | Number of scan attempts before giving up. | 3 |
+| `--warmup-delay` | Delay after firmware warmup before full connect. | 3.0s |
 | `--list-rings` | Scan and list available rings, then exit. | - |
 | `--discover` | Full GATT service discovery and characteristics dump. | - |
-
----
-
-## 🏗️ Architecture Overview
-
-The system follows an **Event-Driven / Producer-Consumer** model built on `asyncio`.
-
-```text
-BLE Ring
-  │  (GATT Notify @ ~25 Hz)
-  ▼
-NuanicConnector      ← Manages BLE lifecycle, pairing, Windows WinRT hacks
-  │
-  ▼
-NuanicMonitor        ← Orchestrates profile detection, parsing, logging, TUI
-  │
-  ├─▶ SignalConditioner   ← Median filter + Butterworth Low-Pass (noise rejection)
-  │       │
-  │       ▼
-  │   MMLikeScorer        ← Real-time 1-100 Arousal Score from SCR features
-  │
-  ├─▶ CSV Logger          ← Persistent session recording (21-column schema)
-  └─▶ TUI Display         ← ANSI live terminal dashboard
-```
-
-### Core Modules (`src/nuanic_ring/`)
-
-| Module | Purpose |
-|--------|---------|
-| `connector.py` | BLE discovery, connection, GATT subscription |
-| `monitor.py` | Main orchestration, parsing, logging, TUI |
-| `waveform_viewer.py` | Live Matplotlib GUI (Raw EDA, Filtered uS, Arousal, IMU) |
-| `signal_processing.py` | `SignalConditioner`: Median + Butterworth filtering |
-| `mm_compat.py` | `MMLikeScorer`: Moodmetric-compatible 1-100 arousal scoring |
-| `data_analysis.py` | Offline vectorized CSV analysis (Pandas/NumPy/scipy) |
-| `ring_profiles.py` | GATT UUID definitions per ring profile |
-| `moodmetric_parser.py` | Legacy Moodmetric byte-payload parser |
-
----
-
-## 🔬 Empirical Rate Findings & Connection Stability
-
-From repeated paired-ring sessions (same command pattern, two MACs), the observed behavior on the Nuanic hardware is:
-
-1. **Hardware Rate Ceiling**: Multi-ring environments hit a hard capability wall at **~16.0 Hz**. The firmware struggles with higher frequencies (like 25 Hz), dropping sync and eventually crashing. We've capped the default safety limits at 16 Hz.
-2. **Setup Stabilization**: The rings do not necessarily require complex "disconnect/reconnect" warmup phases. They just need around **30-90 seconds** after the initial connection to stabilize internally, acknowledge the requested rate, and begin broadcasting steady payload buffers.
-3. **Lazy Logging**: To prevent storing 90 seconds of empty "ramp-up" data, the monitor uses **Lazy Logging**. CSV files are only actively created and written to when the first true payload broadcast is captured.
-4. **Bluetooth Hang Recovery (`--reset-bt`)**: Under heavy loads on Windows, WinRT links can "ghost". If the initial ring connection fails, passing `--reset-bt` lets the orchestrator immediately trigger an aggressive Windows radio-level cycle, ensuring the phantom link drops and the ring is securely connected on retry.
 
 ---
 
@@ -163,6 +120,28 @@ async def run_sensor():
     await monitor.run(duration_seconds=120)
 
 asyncio.run(run_sensor())
+```
+
+Advanced lifecycle (explicit multi-ring control):
+
+```python
+import asyncio
+from nuanic_ring.monitor import NuanicMonitor
+
+async def run_multi_sensor():
+  monitor = NuanicMonitor(calibration_seconds=60, target_hz=16)
+  started = await monitor.start_multi(
+    ring_addresses=["41:09:FB:6B:95:8D", "69:1D:C9:2E:19:64"],
+    auto_reconnect=True,
+  )
+  if not started:
+    return
+  try:
+    await asyncio.sleep(120)
+  finally:
+    await monitor.stop_multi()
+
+asyncio.run(run_multi_sensor())
 ```
 
 ---

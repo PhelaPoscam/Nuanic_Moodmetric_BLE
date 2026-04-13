@@ -704,6 +704,8 @@ class NuanicMonitor:
         max_devices: Optional[int] = None,
         stagger_delay: float = 1.25,
         auto_reconnect: bool = True,
+        scan_timeout: Optional[float] = None,
+        scan_attempts: Optional[int] = None,
     ) -> bool:
         """Start monitoring one or many rings.
 
@@ -761,11 +763,15 @@ class NuanicMonitor:
         discovered_by_mac = {}
 
         if monitor_all or not targets:
+            # Use SDK defaults if not specified
+            s_timeout = scan_timeout if scan_timeout is not None else 6.0
+            s_attempts = scan_attempts if scan_attempts is not None else 3
+
             discovered: List[Dict[str, Any]] = (
                 await self.connector.discover_all_matching_rings(
                     include_device=True,
-                    scan_timeout=6.0,
-                    attempts=3,
+                    scan_timeout=s_timeout,
+                    attempts=s_attempts,
                     retry_delay=0.5,
                 )
             )

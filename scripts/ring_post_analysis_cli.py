@@ -3,11 +3,15 @@
 
 import argparse
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from nuanic_ring.post_analysis import analyze_latest_ring_logs, format_analysis_report
+try:
+    from nuanic_ring.post_analysis import analyze_latest_ring_logs, format_analysis_report
+except ModuleNotFoundError:
+    print(
+        "[ERROR] Could not import 'nuanic_ring'. "
+        "Install the project first: pip install -e .[dev]"
+    )
+    raise SystemExit(1)
 
 
 def main() -> int:

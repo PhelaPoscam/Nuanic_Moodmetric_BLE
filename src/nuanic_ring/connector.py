@@ -265,8 +265,8 @@ class NuanicConnector:
     async def list_available_rings(
         self,
         include_device: bool = False,
-        scan_timeout: float = 5.0,
-        attempts: int = 2,
+        scan_timeout: float = 6.0,
+        attempts: int = 3,
         retry_delay: float = 1.0,
         stop_if_found: bool = False,
     ):
@@ -902,8 +902,8 @@ class NuanicConnector:
     async def discover_all_matching_rings(
         self,
         include_device: bool = True,
-        scan_timeout: float = 4.0,
-        attempts: int = 2,
+        scan_timeout: float = 6.0,
+        attempts: int = 3,
         retry_delay: float = 0.5,
         stop_if_found: bool = False,
     ) -> List[Dict[str, Any]]:
