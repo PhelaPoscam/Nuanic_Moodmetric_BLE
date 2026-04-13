@@ -5,7 +5,10 @@ import argparse
 import sys
 
 try:
-    from nuanic_ring.post_analysis import analyze_latest_ring_logs, format_analysis_report
+    from nuanic_ring.post_analysis import (
+        analyze_latest_ring_logs,
+        format_analysis_report,
+    )
 except ModuleNotFoundError:
     print(
         "[ERROR] Could not import 'nuanic_ring'. "

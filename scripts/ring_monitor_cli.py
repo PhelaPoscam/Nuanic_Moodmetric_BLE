@@ -30,6 +30,7 @@ if sys.platform == "win32":
         pass
 # ----------------------------------------
 
+
 def _parse_ring_addresses(
     ring_addr: str,
     ring_addrs: str,
@@ -347,6 +348,7 @@ async def main():
     ascii_box = None
     if sys.platform == "win32" and not _stdout_encoding_is_utf8():
         from rich import box
+
         box_style = box.ASCII
         ascii_box = box.ASCII
 
@@ -474,7 +476,14 @@ async def main():
                     # Fallback for stray unicode characters in rows
                     safe_rows = []
                     for r in rows:
-                        sr = {k: ("".join(c for c in str(v) if ord(c) < 128) if isinstance(v, str) else v) for k, v in r.items()}
+                        sr = {
+                            k: (
+                                "".join(c for c in str(v) if ord(c) < 128)
+                                if isinstance(v, str)
+                                else v
+                            )
+                            for k, v in r.items()
+                        }
                         safe_rows.append(sr)
                     live.update(
                         _build_dashboard_table(
