@@ -41,6 +41,14 @@ nuanic-ring-monitor --ring-addrs MAC1,MAC2 --target-hz 16
 # Session with analysis (DNE vs computed score)
 nuanic-ring-monitor --monitor-all --duration 60 --post-analysis yes
 
+# Session with runtime stimulus markers
+nuanic-ring-monitor --monitor-all --markers --calibration-seconds 15
+# During run, press SPACE or S/B/R for instant markers
+# Or type: /m STIMULUS_NAME + Enter
+
+# Custom hotkeys
+nuanic-ring-monitor --markers --marker-hotkey S=stimulus_on --marker-hotkey B=baseline_start --marker-hotkey R=rest_start
+
 # Offline analysis
 nuanic-ring-analyzer data/ring_logs/my_session.csv
 nuanic-ring-post-analysis --latest 2
@@ -78,6 +86,8 @@ For troubleshooting details, profile-specific notes, and connection recovery str
 | `--log` / `--no-log` | Enable or disable CSV recording. | `--log` |
 | `--log-dir` | Folder for session CSV output. | `data/ring_logs` |
 | `--waveform` | Launch live Matplotlib plots instead of the TUI table. | False |
+| `--markers` | Enable runtime marker input (SPACE and single-key hotkeys, plus `/m LABEL` + Enter). | False |
+| `--marker-hotkey` | Add or override a single-key marker hotkey. Repeatable. | `SPACE=marker, S=stimulus_on, B=baseline_start, R=rest_start` |
 | `--post-analysis` | Print a scoring comparison vs proprietary DNE on exit. | No |
 | `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
 | `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.25 |

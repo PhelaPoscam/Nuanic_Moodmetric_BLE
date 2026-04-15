@@ -63,6 +63,7 @@ class RingDeviceState:
     log_queue: Optional[asyncio.Queue[List[Any]]] = None
     writer_task: Optional[asyncio.Task[None]] = None
     dropped_rows: int = 0
+    marker_count: int = 0
 
     # Reconnect bookkeeping
     reconnect_attempt: int = 0
@@ -370,6 +371,35 @@ class NuanicMonitor:
             self.equalize_mode,
             "1" if would_drop else "0",
         ]
+
+    def add_marker(self, label: str, source: str = "manual") -> int:
+        """Append a marker row to each active device log for later event alignment.
+
+        Returns the number of device logs that received the marker.
+        """
+        clean_label = (label or "").strip() or "marker"
+        marker_payload = json.dumps(
+            {
+                "label": clean_label,
+                "source": source,
+            },
+            ensure_ascii=True,
+        )
+
+        marker_fields = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", marker_payload]
+
+        inserted = 0
+        for state in self.device_states.values():
+            row = (
+                self._base_row(state, "MARKER")
+                + marker_fields
+                + self._row_rate_tail(state, would_drop=False)
+            )
+            self._enqueue_log(state, row)
+            state.marker_count += 1
+            inserted += 1
+
+        return inserted
 
     def _make_imu_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
