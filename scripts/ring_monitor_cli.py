@@ -9,11 +9,18 @@
 import argparse
 import asyncio
 import sys
-from typing import Any, Dict, List
+import time
+from typing import TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple
 
 from rich.console import Console  # type: ignore[import-not-found]
+from rich.console import Group  # type: ignore[import-not-found]
 from rich.live import Live  # type: ignore[import-not-found]
+from rich.text import Text  # type: ignore[import-not-found]
 from rich.table import Table  # type: ignore[import-not-found]
+
+if TYPE_CHECKING:
+    from nuanic_ring.monitor import NuanicMonitor
 
 
 def _stdout_encoding_is_utf8() -> bool:
@@ -52,13 +59,58 @@ def _parse_ring_addresses(
     return dedup
 
 
+def _parse_marker_hotkey_spec(spec: str) -> Optional[Tuple[str, str]]:
+    """Parse a hotkey spec of the form KEY=LABEL."""
+    text = spec.strip()
+    if not text or "=" not in text:
+        return None
+
+    key_text, label_text = text.split("=", 1)
+    key = key_text.strip().upper()
+    label = label_text.strip()
+    if not key or not label:
+        return None
+    return key, label
+
+
+def _default_marker_hotkeys() -> Dict[str, str]:
+    return {
+        "SPACE": "marker",
+        "S": "stimulus_on",
+        "B": "baseline_start",
+        "R": "rest_start",
+    }
+
+
+def _build_marker_hotkeys(specs: List[str]) -> Dict[str, str]:
+    hotkeys = _default_marker_hotkeys()
+    for spec in specs:
+        parsed = _parse_marker_hotkey_spec(spec)
+        if parsed is None:
+            continue
+        key, label = parsed
+        hotkeys[key] = label
+    return hotkeys
+
+
+def _format_marker_legend(hotkeys: Dict[str, str]) -> str:
+    parts = []
+    for key in sorted(hotkeys):
+        parts.append(f"{key}={hotkeys[key]}")
+    return " | ".join(parts)
+
+
 def _build_dashboard_table(
     rows: List[Dict[str, Any]],
     elapsed_seconds: float,
     box_style: Any = None,
+    marker_legend: str = "",
 ):
     table = Table(
-        title=("Nuanic Multi-Ring Dashboard" f"  |  Elapsed: {elapsed_seconds:.1f}s"),
+        title=(
+            "Nuanic Multi-Ring Dashboard"
+            f"  |  Elapsed: {elapsed_seconds:.1f}s"
+        ),
         box=box_style,
     )
     table.add_column("Device MAC", style="cyan")
@@ -71,6 +123,8 @@ def _build_dashboard_table(
     table.add_column("Obs Hz D306/468F", justify="right")
     table.add_column("Rate Ctrl")
     table.add_column("IMU (X,Y,Z)")
+    if marker_legend:
+        table.caption = f"Markers: {marker_legend}"
 
     if not rows:
         table.add_row(
@@ -102,6 +156,120 @@ def _build_dashboard_table(
         )
 
     return table
+
+
+def _build_dashboard_renderable(
+    rows: List[Dict[str, Any]],
+    elapsed_seconds: float,
+    box_style: Any = None,
+    marker_legend: str = "",
+):
+    table = _build_dashboard_table(
+        rows,
+        elapsed_seconds,
+        box_style=box_style,
+        marker_legend=marker_legend,
+    )
+    if not marker_legend:
+        return table
+
+    legend = Text(f"Marker keys: {marker_legend}", style="dim")
+    return Group(legend, table)
+
+
+class _NonBlockingLineReader:
+    """Non-blocking stdin reader for runtime marker input and hotkeys."""
+
+    def __init__(self, hotkeys: Dict[str, str]) -> None:
+        self._buffer = ""
+        self._win_msvcrt = None
+        self._last_space_ts = 0.0
+        self._hotkeys = {key.upper(): value for key, value in hotkeys.items()}
+        if sys.platform == "win32":
+            import msvcrt
+
+            self._win_msvcrt = msvcrt
+
+    def poll_markers(self) -> List[str]:
+        markers: List[str] = []
+        if self._win_msvcrt is not None:
+            while self._win_msvcrt.kbhit():
+                ch = self._win_msvcrt.getwch()
+                if ch == " ":
+                    now = time.monotonic()
+                    if (now - self._last_space_ts) >= 0.18:
+                        marker = self._hotkeys.get("SPACE")
+                        if marker:
+                            markers.append(marker)
+                        self._last_space_ts = now
+                    continue
+                if len(ch) == 1:
+                    marker = self._hotkeys.get(ch.upper())
+                    if marker:
+                        markers.append(marker)
+                        continue
+                if ch in ("\r", "\n"):
+                    line = self._buffer
+                    self._buffer = ""
+                    label = _parse_marker_label(line)
+                    if label:
+                        markers.append(label)
+                    continue
+                if ch in ("\b", "\x7f"):
+                    self._buffer = self._buffer[:-1]
+                    continue
+                if ch in ("\x00", "\xe0"):
+                    if self._win_msvcrt.kbhit():
+                        self._win_msvcrt.getwch()
+                    continue
+                if ch == "\x03":
+                    raise KeyboardInterrupt
+                self._buffer += ch
+            return markers
+
+        import select
+
+        readable, _, _ = select.select([sys.stdin], [], [], 0)
+        if not readable:
+            return markers
+
+        line = sys.stdin.readline()
+        if not line:
+            return markers
+        label = _parse_marker_label(line.rstrip("\r\n"))
+        if label:
+            markers.append(label)
+        return markers
+
+
+def _parse_marker_label(raw_line: str) -> str | None:
+    """Parse accepted marker commands from user input."""
+    line = raw_line.strip()
+    if not line:
+        return None
+
+    lower = line.lower()
+    if lower.startswith("/m "):
+        label = line[3:].strip()
+        return label or None
+    if lower.startswith("marker "):
+        label = line[7:].strip()
+        return label or None
+    if line.startswith("/"):
+        return None
+    return line
+
+
+def _poll_marker_input(
+    reader: _NonBlockingLineReader,
+    monitor: "NuanicMonitor",
+) -> None:
+    labels = reader.poll_markers()
+    for label in labels:
+        source = "keypress" if label else "stdin"
+        inserted = monitor.add_marker(label=label, source=source)
+        if inserted > 0:
+            print(f"[MARKER] '{label}' inserted into {inserted} device log(s)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -302,6 +470,21 @@ Examples:
         help="Enable waveform viewer instead of table dashboard",
     )
     parser.add_argument(
+        "--markers",
+        action="store_true",
+        help="Enable runtime marker input (hotkeys and '/m LABEL' + Enter)",
+    )
+    parser.add_argument(
+        "--marker-hotkey",
+        action="append",
+        default=[],
+        metavar="KEY=LABEL",
+        help=(
+            "Add or override a single-key marker hotkey. Repeatable, "
+            "for example: --marker-hotkey S=stimulus"
+        ),
+    )
+    parser.add_argument(
         "--window-seconds",
         type=int,
         default=10,
@@ -433,6 +616,7 @@ async def main():
     )
 
     explicit_addresses = _parse_ring_addresses(args.ring_addr, args.ring_addrs)
+    marker_hotkeys = _build_marker_hotkeys(args.marker_hotkey)
     monitor_all = args.monitor_all
 
     if not explicit_addresses and not monitor_all:
@@ -460,6 +644,22 @@ async def main():
 
     refresh_interval = max(0.05, args.ui_refresh_ms / 1000.0)
     started_at = asyncio.get_event_loop().time()
+    marker_reader = (
+        _NonBlockingLineReader(marker_hotkeys) if args.markers else None
+    )
+
+    if args.markers:
+        marker_legend = _format_marker_legend(marker_hotkeys)
+        console.print(
+            f"[cyan]Markers enabled:[/cyan] {marker_legend}. "
+            "Press [bold]SPACE[/bold] for marker or type [bold]/m LABEL[/bold] "
+            "+ Enter for a custom label."
+        )
+        console.print(
+            "[dim]Tip: use SPACE/S/B/R during the session to mark events in real time.[/dim]"
+        )
+    else:
+        marker_legend = ""
 
     try:
         with Live(
@@ -470,8 +670,13 @@ async def main():
                 elapsed = asyncio.get_event_loop().time() - started_at
                 rows = monitor.dashboard_rows()
                 try:
-                    table = _build_dashboard_table(rows, elapsed, box_style=box_style)
-                    live.update(table)
+                    renderable = _build_dashboard_renderable(
+                        rows,
+                        elapsed,
+                        box_style=box_style,
+                        marker_legend=marker_legend,
+                    )
+                    live.update(renderable)
                 except UnicodeEncodeError:
                     # Fallback for stray unicode characters in rows
                     safe_rows = []
@@ -486,15 +691,19 @@ async def main():
                         }
                         safe_rows.append(sr)
                     live.update(
-                        _build_dashboard_table(
+                        _build_dashboard_renderable(
                             safe_rows,
                             elapsed,
                             box_style=(ascii_box if sys.platform == "win32" else None),
+                            marker_legend=marker_legend,
                         )
                     )
 
                 if args.duration is not None and elapsed >= args.duration:
                     break
+
+                if marker_reader is not None:
+                    _poll_marker_input(marker_reader, monitor)
 
                 await asyncio.sleep(refresh_interval)
     except (KeyboardInterrupt, asyncio.CancelledError):
