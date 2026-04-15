@@ -39,9 +39,7 @@ def test_cli_default_marker_hotkeys():
 
 
 def test_cli_marker_hotkey_override():
-    hotkeys = _ring_monitor_cli()._build_marker_hotkeys(
-        ["S=start", "X=cleanup"]
-    )
+    hotkeys = _ring_monitor_cli()._build_marker_hotkeys(["S=start", "X=cleanup"])
 
     assert hotkeys["S"] == "start"
     assert hotkeys["X"] == "cleanup"

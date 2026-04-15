@@ -386,7 +386,27 @@ class NuanicMonitor:
             ensure_ascii=True,
         )
 
-        marker_fields = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", marker_payload]
+        marker_fields = [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            marker_payload,
+        ]
 
         inserted = 0
         for state in self.device_states.values():
