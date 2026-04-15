@@ -107,10 +107,7 @@ def _build_dashboard_table(
     marker_legend: str = "",
 ):
     table = Table(
-        title=(
-            "Nuanic Multi-Ring Dashboard"
-            f"  |  Elapsed: {elapsed_seconds:.1f}s"
-        ),
+        title=("Nuanic Multi-Ring Dashboard" f"  |  Elapsed: {elapsed_seconds:.1f}s"),
         box=box_style,
     )
     table.add_column("Device MAC", style="cyan")
@@ -644,9 +641,7 @@ async def main():
 
     refresh_interval = max(0.05, args.ui_refresh_ms / 1000.0)
     started_at = asyncio.get_event_loop().time()
-    marker_reader = (
-        _NonBlockingLineReader(marker_hotkeys) if args.markers else None
-    )
+    marker_reader = _NonBlockingLineReader(marker_hotkeys) if args.markers else None
 
     if args.markers:
         marker_legend = _format_marker_legend(marker_hotkeys)
