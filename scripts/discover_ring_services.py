@@ -10,13 +10,13 @@ This script consolidates exploratory reverse-engineering tools into one entrypoi
 
 import argparse
 import asyncio
+import platform
 import struct
 import sys
 import time
 from collections import defaultdict
 from datetime import datetime
 from typing import Dict, Optional
-import platform
 
 try:
     from nuanic_ring.connector import NuanicConnector

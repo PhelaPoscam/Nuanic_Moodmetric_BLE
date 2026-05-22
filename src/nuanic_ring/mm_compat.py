@@ -12,10 +12,10 @@ and SCL (skin conductance) and scales the weighted result to a personal
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import math
 
 # Empirical linear conversion from a field example:
 # raw=3464 -> 845716.029603 ohms.

@@ -10,14 +10,13 @@ import argparse
 import asyncio
 import sys
 import time
-from typing import TYPE_CHECKING
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from rich.console import Console  # type: ignore[import-not-found]
 from rich.console import Group  # type: ignore[import-not-found]
 from rich.live import Live  # type: ignore[import-not-found]
-from rich.text import Text  # type: ignore[import-not-found]
 from rich.table import Table  # type: ignore[import-not-found]
+from rich.text import Text  # type: ignore[import-not-found]
 
 if TYPE_CHECKING:
     from nuanic_ring.monitor import NuanicMonitor

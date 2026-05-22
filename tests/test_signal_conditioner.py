@@ -1,4 +1,5 @@
 import numpy as np
+
 from nuanic_ring.signal_processing import SignalConditioner
 
 

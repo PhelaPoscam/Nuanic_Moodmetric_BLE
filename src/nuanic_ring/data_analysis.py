@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import pandas as pd
-import numpy as np
 import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+import pandas as pd
 
 
 def load_nuanic_csv(filepath: str) -> pd.DataFrame:

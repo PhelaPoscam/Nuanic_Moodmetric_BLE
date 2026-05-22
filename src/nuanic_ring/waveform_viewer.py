@@ -23,8 +23,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .connector import NuanicConnector
+from .mm_compat import MMFeatures, MMLikeScorer
 from .signal_processing import SignalConditioner
-from .mm_compat import MMLikeScorer, MMFeatures
 
 
 def convert_eda(raw_value: int):

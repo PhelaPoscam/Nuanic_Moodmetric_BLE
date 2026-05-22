@@ -68,9 +68,10 @@ class NuanicConnector:
         self._disconnect_event = asyncio.Event()
 
         # Multi-device runtime registries keyed by BLE MAC address.
-        self.clients = {}
-        self.devices = {}
-        self._disconnect_events = {}
+        self.clients: Dict[str, BleakClient] = {}
+        self.devices: Dict[str, Any] = {}
+        self._disconnect_events: Dict[str, asyncio.Event] = {}
+        self._disconnect_events_lock = asyncio.Lock()
 
     def _on_disconnect(self, _client):
         """Bleak disconnect callback to confirm OS-level link release."""
@@ -277,8 +278,8 @@ class NuanicConnector:
             )
 
         from nuanic_ring.ring_profiles import (
-            NUANIC_SERVICE_UUID,
             MOODMETRIC_SERVICE_UUIDS,
+            NUANIC_SERVICE_UUID,
         )
 
         merged = {}
@@ -934,11 +935,20 @@ class NuanicConnector:
 
         return list(merged.values())
 
+    async def _get_or_create_disconnect_event(self, address: str) -> asyncio.Event:
+        """Thread-safe fetch-or-create for per-device disconnect event."""
+        async with self._disconnect_events_lock:
+            event = self._disconnect_events.get(address)
+            if event is None:
+                event = asyncio.Event()
+                self._disconnect_events[address] = event
+            event.clear()
+            return event
+
     async def connect_device(self, address: str, device: Any = None) -> bool:
         """Connect one device and register it in the multi-device registry."""
         address = address.upper()
-        event = self._disconnect_events.setdefault(address, asyncio.Event())
-        event.clear()
+        event = await self._get_or_create_disconnect_event(address)
 
         target = device or address
         client = self._create_bleak_client(
@@ -1084,21 +1094,22 @@ class NuanicConnector:
             )
 
             # Run PowerShell command
-            process = subprocess.Popen(
-                ["powershell", "-Command", ps_cmd],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            completed = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
             )
-            stdout, stderr = process.communicate(timeout=5)
 
-            if (
-                process.returncode == 0 or process.returncode == 1
-            ):  # 1 = item not found (already unpaired)
+            if completed.returncode == 0 or completed.returncode == 1:
+                # 1 = item not found (already unpaired)
                 print(f"[OK] Removed {self.device.name} from Windows Bluetooth")
             else:
-                print(
-                    f"[WARN] Unpair: {stderr.decode().strip() if stderr else 'Unknown error'}"
+                err_msg = (
+                    completed.stderr.strip() if completed.stderr else "Unknown error"
                 )
+                print(f"[WARN] Unpair: {err_msg}")
 
         except subprocess.TimeoutExpired:
             print("[WARN] Unpair timeout")
@@ -1191,7 +1202,7 @@ class NuanicConnector:
         if client:
             try:
                 await client.stop_notify(self.STRESS_CHARACTERISTIC)
-            except:
+            except Exception:
                 pass
 
     async def unsubscribe_from_imu(
@@ -1207,7 +1218,7 @@ class NuanicConnector:
         if client:
             try:
                 await client.stop_notify(self.IMU_CHARACTERISTIC)
-            except:
+            except Exception:
                 pass
 
     async def subscribe_to_raw_eda(
@@ -1246,7 +1257,7 @@ class NuanicConnector:
         if client:
             try:
                 await client.stop_notify(self.RAW_EDA_CHARACTERISTIC)
-            except:
+            except Exception:
                 pass
 
     async def subscribe_to_live_eda(
@@ -1285,7 +1296,7 @@ class NuanicConnector:
         if client:
             try:
                 await client.stop_notify(self.MYSTERY_NOTIFY_CHARACTERISTIC)
-            except:
+            except Exception:
                 pass
 
     async def discover_services(self):
@@ -1326,7 +1337,7 @@ class NuanicConnector:
         # Give the ring stack a moment to settle after connection
         await asyncio.sleep(0.5)
 
-        target_hz = max(1, int(target_hz))
+        target_hz = min(100, max(1, int(target_hz)))
         payloads = [
             bytes([target_hz & 0xFF]),
             struct.pack("<H", target_hz),

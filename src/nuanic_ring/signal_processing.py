@@ -1,6 +1,8 @@
 """Signal conditioning for raw physiological streams."""
 
+import math
 from collections import deque
+
 import numpy as np
 from scipy import signal
 
@@ -15,8 +17,11 @@ class SignalConditioner:
     def __init__(
         self, sample_rate: float = 25.0, median_kernel: int = 5, cutoff_hz: float = 1.5
     ):
+        self.sample_rate = sample_rate
+        self.median_kernel = median_kernel
+        self.cutoff_hz = cutoff_hz
         self.maxlen = median_kernel
-        self.median_buffer = deque(maxlen=median_kernel)
+        self.median_buffer: deque[float] = deque(maxlen=median_kernel)
 
         # Calculate Nyquist frequency and normalized cutoff
         nyq = 0.5 * sample_rate
@@ -29,6 +34,10 @@ class SignalConditioner:
         self.zi_base = signal.lfilter_zi(self.b, self.a)
         self.z = None
 
+    def _reset_state(self) -> None:
+        self.median_buffer.clear()
+        self.z = None
+
     def process(self, value: float) -> float:
         """Process a single data point in real-time.
 
@@ -38,6 +47,10 @@ class SignalConditioner:
         Returns:
             The filtered data point.
         """
+        if not math.isfinite(value):
+            self._reset_state()
+            return float("nan")
+
         if self.z is None:
             # Initialize with the first passed value to avoid startup drop
             self.z = self.zi_base * value
