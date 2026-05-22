@@ -78,3 +78,7 @@ temp_patch.py
 tests_output.txt
 architecture_audit_and_roadmap.md
 diagnostic_capture_test.py
+
+# Tooling-specific ignored paths
+.commandcode/
+
