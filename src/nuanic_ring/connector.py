@@ -46,7 +46,7 @@ class NuanicConnector:
 
     def __init__(
         self,
-        timeout=15.0,
+        timeout=7.0,
         max_scan_attempts=3,
         max_connect_attempts=3,
         connect_backoff_seconds=2.0,
@@ -212,7 +212,8 @@ class NuanicConnector:
             f"'{self.target_address}'" if self.target_address else "(any Nuanic)"
         )
 
-        for attempt in range(1, self.max_scan_attempts + 1):
+        max_attempts = 1 if self.target_address else self.max_scan_attempts
+        for attempt in range(1, max_attempts + 1):
             try:
                 # Quick scan - find all devices
                 devices = await BleakScanner.discover(timeout=2.0)
@@ -235,14 +236,14 @@ class NuanicConnector:
                         return device
 
                 # Not found in this scan
-                if attempt < self.max_scan_attempts:
+                if attempt < max_attempts:
                     await asyncio.sleep(0.5)  # Short pause between scans
 
             except asyncio.CancelledError:
                 # Re-raise so Ctrl+C still works
                 raise
             except Exception as e:
-                if attempt < self.max_scan_attempts:
+                if attempt < max_attempts:
                     await asyncio.sleep(0.5)
 
         return None
@@ -269,10 +270,11 @@ class NuanicConnector:
         scan_timeout: float = 6.0,
         attempts: int = 3,
         retry_delay: float = 1.0,
-        stop_if_found: bool = False,
+        stop_if_found: bool = True,
+        silent: bool = False,
     ):
         """Scan and return list of all available Nuanic rings."""
-        if not stop_if_found:
+        if not silent:
             print(
                 f"[SCAN] Discovering Nuanic rings (timeout: {scan_timeout}s, attempts: {attempts})..."
             )
@@ -285,12 +287,16 @@ class NuanicConnector:
         merged = {}
         try:
             for attempt in range(1, max(1, attempts) + 1):
-                if attempts > 1 and not stop_if_found:
+                if attempts > 1 and not silent:
                     print(f"[SCAN] Attempt {attempt}/{attempts}...")
+
+                current_timeout = scan_timeout
+                if attempt == 1 and stop_if_found:
+                    current_timeout = min(3.0, scan_timeout)
 
                 # Use discover(return_adv=True) for a thorough window
                 devices_map = await BleakScanner.discover(
-                    timeout=max(2.0, scan_timeout), return_adv=True
+                    timeout=max(2.0, current_timeout), return_adv=True
                 )
 
                 for device, adv in devices_map.values():
@@ -411,6 +417,8 @@ class NuanicConnector:
         self,
         scan_timeout: float = 6.0,
         attempts: int = 3,
+        stop_if_found: bool = True,
+        silent: bool = False,
     ):
         """Return discoverable rings plus Windows paired rings (if any)."""
         scanned = await self.list_available_rings(
@@ -418,6 +426,8 @@ class NuanicConnector:
             scan_timeout=scan_timeout,
             attempts=attempts,
             retry_delay=1.0,
+            stop_if_found=stop_if_found,
+            silent=silent,
         )
         paired = self._get_windows_paired_rings()
 
@@ -906,7 +916,8 @@ class NuanicConnector:
         scan_timeout: float = 6.0,
         attempts: int = 3,
         retry_delay: float = 0.5,
-        stop_if_found: bool = False,
+        stop_if_found: bool = True,
+        silent: bool = False,
     ) -> List[Dict[str, Any]]:
         """Discover all visible Nuanic/Moodmetric rings."""
         scanned = await self.list_available_rings(
@@ -915,6 +926,7 @@ class NuanicConnector:
             attempts=attempts,
             retry_delay=retry_delay,
             stop_if_found=stop_if_found,
+            silent=silent,
         )
 
         # On Windows, merge in paired records to catch bonded devices that do not
@@ -932,6 +944,18 @@ class NuanicConnector:
                     "name": entry.get("name") or "Nuanic",
                     "device": None,
                 }
+
+        # Fallback to cached address if no rings found
+        if not merged:
+            cached = self._load_last_address()
+            if cached:
+                cached_clean = self._sanitize_address(cached)
+                if cached_clean:
+                    merged[cached_clean.upper()] = {
+                        "address": cached_clean,
+                        "name": "Nuanic (cached)",
+                        "device": None,
+                    }
 
         return list(merged.values())
 

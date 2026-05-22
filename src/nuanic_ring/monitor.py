@@ -4,6 +4,7 @@ import asyncio
 import csv
 import json
 import math
+import platform
 import struct
 from collections import deque
 from dataclasses import dataclass, field
@@ -835,8 +836,26 @@ class NuanicMonitor:
                     scan_timeout=s_timeout,
                     attempts=s_attempts,
                     retry_delay=0.5,
+                    stop_if_found=True,
                 )
             )
+
+            if not discovered and platform.system() == "Windows" and self.allow_reset_bt:
+                print(
+                    "[BT-RESET] No rings discovered and allow_reset_bt is enabled. "
+                    "Resetting Bluetooth adapter to clear stale connections..."
+                )
+                reset_ok = await self.connector._reset_bluetooth_radio()
+                if reset_ok:
+                    print("[BT-RESET] Rescanning after adapter reset...")
+                    discovered = await self.connector.discover_all_matching_rings(
+                        include_device=True,
+                        scan_timeout=s_timeout,
+                        attempts=s_attempts,
+                        retry_delay=0.5,
+                        stop_if_found=True,
+                    )
+
             discovered_by_mac = {d["address"].upper(): d for d in discovered}
             if not targets:
                 targets = list(discovered_by_mac.keys())
