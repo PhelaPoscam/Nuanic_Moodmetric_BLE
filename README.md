@@ -80,7 +80,7 @@ For troubleshooting details, profile-specific notes, and connection recovery str
 | `--duration` | Total session length in seconds. | Unlimited |
 | `--ring-addrs` | Comma-separated list of MAC addresses to connect. | None |
 | `--monitor-all` | Connect to all discovered Nuanic rings. | False |
-| `--target-hz` | Desired sampling frequency (e.g., `10`, `16`). | 10.0 |
+| `--target-hz` | Desired sampling frequency in Hz (capped between 1 and 16 Hz). | 10.0 |
 | `--force-hz` | Bypass the 16Hz hardware capability safety warning. | False |
 | `--reset-bt` | Aggressively reset Windows BT radio on initial failure. | False |
 | `--log` / `--no-log` | Enable or disable CSV recording. | `--log` |
