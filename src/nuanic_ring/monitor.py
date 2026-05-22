@@ -840,7 +840,11 @@ class NuanicMonitor:
                 )
             )
 
-            if not discovered and platform.system() == "Windows" and self.allow_reset_bt:
+            if (
+                not discovered
+                and platform.system() == "Windows"
+                and self.allow_reset_bt
+            ):
                 print(
                     "[BT-RESET] No rings discovered and allow_reset_bt is enabled. "
                     "Resetting Bluetooth adapter to clear stale connections..."
