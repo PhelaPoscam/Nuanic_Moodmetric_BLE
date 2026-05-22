@@ -42,4 +42,3 @@ def test_new_parameters_and_defaults_contracts():
     discover_sig = inspect.signature(NuanicConnector.discover_all_matching_rings)
     assert discover_sig.parameters["stop_if_found"].default is True
     assert discover_sig.parameters["silent"].default is False
-
