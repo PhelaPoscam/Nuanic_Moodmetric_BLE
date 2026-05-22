@@ -1,10 +1,11 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from nuanic_ring.data_analysis import (
-    fit_mm_equation_from_export,
     analyze_stress,
-    detect_peaks,
     calculate_correlation,
+    detect_peaks,
+    fit_mm_equation_from_export,
 )
 
 

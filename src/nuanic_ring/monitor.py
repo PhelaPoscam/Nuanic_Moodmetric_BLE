@@ -423,215 +423,227 @@ class NuanicMonitor:
 
     def _make_imu_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
-            if not self.capture_armed:
-                return
+            try:
+                if not self.capture_armed:
+                    return
 
-            state = self._ensure_device_state(mac)
-            parsed = self._parse_d306_packet(data)
-            if not parsed:
-                return
+                state = self._ensure_device_state(mac)
+                parsed = self._parse_d306_packet(data)
+                if not parsed:
+                    return
 
-            now = datetime.now()
-            state.last_seen = now
-            self._update_observed_hz(state, "d306", now)
-            would_drop = self._equalize_decision(state, "d306")
+                now = datetime.now()
+                state.last_seen = now
+                self._update_observed_hz(state, "d306", now)
+                would_drop = self._equalize_decision(state, "d306")
 
-            if would_drop and self.equalize_mode == "enforce":
-                return
+                if would_drop and self.equalize_mode == "enforce":
+                    return
 
-            state.last_accepted_d306_ts = now
-            state.d306_count += 1
+                state.last_accepted_d306_ts = now
+                state.d306_count += 1
 
-            clock = parsed["clock"]
-            context = parsed["context"]
-            eda_value = parsed["eda_value"]
-            dne_stress_index = parsed["dne_stress_index"]
+                clock = parsed["clock"]
+                context = parsed["context"]
+                eda_value = parsed["eda_value"]
+                dne_stress_index = parsed["dne_stress_index"]
 
-            resistance_kohm, conductance_us = convert_eda(eda_value)
-            filtered_us = state.signal_conditioner.process(conductance_us)
-            freq, amp = state.scorer.update_scr_features(tonic_value=filtered_us)
-            score_state = state.scorer.update(
-                MMFeatures(
-                    scr_frequency_per_min=freq,
-                    scr_amplitude=amp,
-                    scl_microsiemens=filtered_us,
+                resistance_kohm, conductance_us = convert_eda(eda_value)
+                filtered_us = state.signal_conditioner.process(conductance_us)
+                freq, amp = state.scorer.update_scr_features(tonic_value=filtered_us)
+                score_state = state.scorer.update(
+                    MMFeatures(
+                        scr_frequency_per_min=freq,
+                        scr_amplitude=amp,
+                        scl_microsiemens=filtered_us,
+                    )
                 )
-            )
 
-            state.raw_eda = eda_value
-            state.filtered_us = filtered_us
-            state.arousal_score = score_state["mm_like_1_to_100"]
-            state.dne_stress_index = dne_stress_index
-            state.d306_buffer.append(
-                {
-                    "clock": clock,
-                    "context": context,
-                    "eda_value": eda_value,
-                    "dne_stress_index": dne_stress_index,
-                }
-            )
+                state.raw_eda = eda_value
+                state.filtered_us = filtered_us
+                state.arousal_score = score_state["mm_like_1_to_100"]
+                state.dne_stress_index = dne_stress_index
+                state.d306_buffer.append(
+                    {
+                        "clock": clock,
+                        "context": context,
+                        "eda_value": eda_value,
+                        "dne_stress_index": dne_stress_index,
+                    }
+                )
 
-            row = (
-                self._base_row(state, "D306_EDA")
-                + [
-                    eda_value,
-                    dne_stress_index,
-                    f"{filtered_us:.4f}",
-                    f"{state.arousal_score:.2f}",
-                    "1" if score_state["calibrated"] else "0",
-                    f"{resistance_kohm:.4f}",
-                    f"{conductance_us:.4f}",
-                    clock,
-                    context,
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    data.hex(),
-                    "",
-                    "",
-                ]
-                + self._row_rate_tail(state, would_drop)
-            )
-            self._enqueue_log(state, row)
+                row = (
+                    self._base_row(state, "D306_EDA")
+                    + [
+                        eda_value,
+                        dne_stress_index,
+                        f"{filtered_us:.4f}",
+                        f"{state.arousal_score:.2f}",
+                        "1" if score_state["calibrated"] else "0",
+                        f"{resistance_kohm:.4f}",
+                        f"{conductance_us:.4f}",
+                        clock,
+                        context,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        data.hex(),
+                        "",
+                        "",
+                    ]
+                    + self._row_rate_tail(state, would_drop)
+                )
+                self._enqueue_log(state, row)
 
-            # Toggle the heartbeat for visual feedback
-            state.heartbeat_tick = not state.heartbeat_tick
+                # Toggle the heartbeat for visual feedback
+                state.heartbeat_tick = not state.heartbeat_tick
+            except Exception:
+                pass
 
         return _cb
 
     def _make_stress_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
-            if not self.capture_armed:
-                return
+            try:
+                if not self.capture_armed:
+                    return
 
-            state = self._ensure_device_state(mac)
-            parsed_batch = self._parse_468f_imu_batch(data)
-            if not parsed_batch:
-                return
+                state = self._ensure_device_state(mac)
+                parsed_batch = self._parse_468f_imu_batch(data)
+                if not parsed_batch:
+                    return
 
-            now = datetime.now()
-            state.last_seen = now
-            self._update_observed_hz(state, "imu", now)
-            would_drop = self._equalize_decision(state, "imu")
+                now = datetime.now()
+                state.last_seen = now
+                self._update_observed_hz(state, "imu", now)
+                would_drop = self._equalize_decision(state, "imu")
 
-            if would_drop and self.equalize_mode == "enforce":
-                return
+                if would_drop and self.equalize_mode == "enforce":
+                    return
 
-            state.last_accepted_imu_ts = now
-            state.imu_batch_count += 1
-            state.imu_xyz = (
-                parsed_batch["first_x"],
-                parsed_batch["first_y"],
-                parsed_batch["first_z"],
-            )
-            state.imu_batch_buffer.append(parsed_batch)
-
-            row = (
-                self._base_row(state, "IMU_BATCH_468F")
-                + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    parsed_batch["clock"],
-                    parsed_batch["context"],
+                state.last_accepted_imu_ts = now
+                state.imu_batch_count += 1
+                state.imu_xyz = (
                     parsed_batch["first_x"],
                     parsed_batch["first_y"],
                     parsed_batch["first_z"],
-                    f"{parsed_batch['motion_intensity']:.2f}",
-                    "",
-                    data[8:].hex(),
-                    data.hex(),
-                    "",
-                ]
-                + self._row_rate_tail(state, would_drop)
-            )
-            self._enqueue_log(state, row)
+                )
+                state.imu_batch_buffer.append(parsed_batch)
+
+                row = (
+                    self._base_row(state, "IMU_BATCH_468F")
+                    + [
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        parsed_batch["clock"],
+                        parsed_batch["context"],
+                        parsed_batch["first_x"],
+                        parsed_batch["first_y"],
+                        parsed_batch["first_z"],
+                        f"{parsed_batch['motion_intensity']:.2f}",
+                        "",
+                        data[8:].hex(),
+                        data.hex(),
+                        "",
+                    ]
+                    + self._row_rate_tail(state, would_drop)
+                )
+                self._enqueue_log(state, row)
+            except Exception:
+                pass
 
         return _cb
 
     def _make_raw_eda_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
-            if not self.capture_armed:
-                return
+            try:
+                if not self.capture_armed:
+                    return
 
-            state = self._ensure_device_state(mac)
-            state.last_seen = datetime.now()
-            state.state_count += 1
-            state_code = data[0] if len(data) >= 1 else None
-            would_drop = False
+                state = self._ensure_device_state(mac)
+                state.last_seen = datetime.now()
+                state.state_count += 1
+                state_code = data[0] if len(data) >= 1 else None
+                would_drop = False
 
-            row = (
-                self._base_row(state, "STATE_3C18")
-                + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    state_code if state_code is not None else "",
-                    data.hex(),
-                    data.hex(),
-                    "",
-                ]
-                + self._row_rate_tail(state, would_drop)
-            )
-            self._enqueue_log(state, row)
+                row = (
+                    self._base_row(state, "STATE_3C18")
+                    + [
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        state_code if state_code is not None else "",
+                        data.hex(),
+                        data.hex(),
+                        "",
+                    ]
+                    + self._row_rate_tail(state, would_drop)
+                )
+                self._enqueue_log(state, row)
+            except Exception:
+                pass
 
         return _cb
 
     def _make_live_eda_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
-            if not self.capture_armed:
-                return
+            try:
+                if not self.capture_armed:
+                    return
 
-            state = self._ensure_device_state(mac)
-            state.last_seen = datetime.now()
-            state.live_eda_count += 1
-            would_drop = False
+                state = self._ensure_device_state(mac)
+                state.last_seen = datetime.now()
+                state.live_eda_count += 1
+                would_drop = False
 
-            row = (
-                self._base_row(state, "LIVE_EDA_42DC")
-                + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    data.hex(),
-                    data.hex(),
-                    json.dumps({"len": len(data)}),
-                ]
-                + self._row_rate_tail(state, would_drop)
-            )
-            self._enqueue_log(state, row)
+                row = (
+                    self._base_row(state, "LIVE_EDA_42DC")
+                    + [
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        data.hex(),
+                        data.hex(),
+                        json.dumps({"len": len(data)}),
+                    ]
+                    + self._row_rate_tail(state, would_drop)
+                )
+                self._enqueue_log(state, row)
+            except Exception:
+                pass
 
         return _cb
 
@@ -850,33 +862,38 @@ class NuanicMonitor:
 
     async def _connection_health_loop(self) -> None:
         while self.running:
-            for mac, state in list(self.device_states.items()):
-                client = self.connector.get_client(mac)
-                is_connected = bool(client and getattr(client, "is_connected", False))
+            try:
+                for mac, state in list(self.device_states.items()):
+                    client = self.connector.get_client(mac)
+                    is_connected = bool(
+                        client and getattr(client, "is_connected", False)
+                    )
 
-                if is_connected:
-                    if state.status != "connected":
-                        state.status = "connected"
-                    continue
+                    if is_connected:
+                        if state.status != "connected":
+                            state.status = "connected"
+                        continue
 
-                if state.status == "connecting":
-                    continue
+                    if state.status == "connecting":
+                        continue
 
-                if not self._auto_reconnect:
-                    state.status = "offline"
-                    continue
+                    if not self._auto_reconnect:
+                        state.status = "offline"
+                        continue
 
-                state.status = "reconnecting"
-                state.reconnect_attempt += 1
-                wait_seconds = min(
-                    30.0,
-                    self._reconnect_backoff_seconds
-                    * (2 ** (state.reconnect_attempt - 1)),
-                )
-                await asyncio.sleep(wait_seconds)
-                await self._unsubscribe_device_streams(mac)
-                await self.connector.disconnect(address=mac)
-                await self._connect_and_subscribe(mac)
+                    state.status = "reconnecting"
+                    state.reconnect_attempt += 1
+                    wait_seconds = min(
+                        30.0,
+                        self._reconnect_backoff_seconds
+                        * (2 ** (state.reconnect_attempt - 1)),
+                    )
+                    await asyncio.sleep(wait_seconds)
+                    await self._unsubscribe_device_streams(mac)
+                    await self.connector.disconnect(address=mac)
+                    await self._connect_and_subscribe(mac)
+            except Exception:
+                pass
 
             await asyncio.sleep(1.0)
 
@@ -896,12 +913,19 @@ class NuanicMonitor:
 
         await self.connector.disconnect()
 
+        # Surface dropped-row warnings at session end
         for state in self.device_states.values():
             if state.writer_task:
                 try:
                     await state.writer_task
                 except asyncio.CancelledError:
                     pass
+            if state.dropped_rows > 0:
+                print(
+                    f"[WARN] {state.mac}: {state.dropped_rows} log rows "
+                    f"were dropped (queue full). Consider reducing target_hz "
+                    f"or increasing queue size."
+                )
 
     def dashboard_rows(self) -> List[Dict[str, str]]:
         rows: List[Dict[str, str]] = []
@@ -918,12 +942,13 @@ class NuanicMonitor:
             rate_hz = f"{state.d306_observed_hz:.1f}/{state.imu_observed_hz:.1f}"
             hb_mark = "*" if state.heartbeat_tick else " "
             rate_hz = f"{hb_mark} {rate_hz}"
+            drop_info = f" DROP:{state.dropped_rows}" if state.dropped_rows > 0 else ""
 
             imu_x, imu_y, imu_z = state.imu_xyz
             rows.append(
                 {
                     "device_mac": mac,
-                    "connection_status": state.status,
+                    "connection_status": state.status + drop_info,
                     "battery": bat_str,
                     "raw_eda": eda_str,
                     "filtered_us": filt_str,

@@ -1,5 +1,6 @@
 import datetime
-from nuanic_ring.mm_compat import MMLikeScorer, MMFeatures, decode_raw_resistance_packet
+
+from nuanic_ring.mm_compat import MMFeatures, MMLikeScorer, decode_raw_resistance_packet
 
 
 def test_mmlike_scorer_calibration():

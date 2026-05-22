@@ -1,8 +1,8 @@
 from nuanic_ring.ring_profiles import (
-    detect_ring_profile_from_service_uuids,
-    NUANIC_PROFILE,
     MOODMETRIC_PROFILE,
+    NUANIC_PROFILE,
     UNKNOWN_PROFILE,
+    detect_ring_profile_from_service_uuids,
 )
 
 
