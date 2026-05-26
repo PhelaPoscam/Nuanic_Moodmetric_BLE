@@ -201,9 +201,8 @@ class NuanicMonitor:
         if not self.enable_logging or state.log_file:
             return
 
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
         safe_mac = state.mac.replace(":", "-")
-        # Format: SessionDate_2026-05-26_10-10-18_P01_ring-E34502.csv
         parts = ["SessionDate", timestamp]
         if self.participant_id:
             parts.append(self.participant_id)
