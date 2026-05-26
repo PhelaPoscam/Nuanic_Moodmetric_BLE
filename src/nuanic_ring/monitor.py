@@ -106,10 +106,12 @@ class NuanicMonitor:
         use_warmup: bool = False,
         warmup_delay: float = 3.0,
         allow_reset_bt: bool = False,
+        participant_id: Optional[str] = None,
     ):
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
         self.force_hz = force_hz
+        self.participant_id = participant_id
         if self.enable_logging:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -201,7 +203,13 @@ class NuanicMonitor:
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         safe_mac = state.mac.replace(":", "-")
-        state.log_file = self.log_dir / f"ring_{safe_mac}_{timestamp}.csv"
+        # Format: SessionDate_2026-05-26_10-10-18_P01_ring-E34502.csv
+        parts = ["SessionDate", timestamp]
+        if self.participant_id:
+            parts.append(self.participant_id)
+        parts.append(f"ring-{safe_mac[-6:]}")
+        filename = "_".join(parts) + ".csv"
+        state.log_file = self.log_dir / filename
 
         try:
             with open(

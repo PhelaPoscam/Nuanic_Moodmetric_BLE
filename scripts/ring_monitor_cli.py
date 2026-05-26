@@ -293,7 +293,13 @@ Examples:
         "--log-dir",
         default="data/ring_logs",
         help="Directory to save CSV logs (default: data/ring_logs)",
-    )
+      )
+    parser.add_argument(
+        "--participant-id",
+        type=str,
+        default=None,
+        help="Participant ID for session labeling (e.g., P01, Subject_A)",
+      )
     log_group = parser.add_mutually_exclusive_group()
     log_group.add_argument(
         "--log",
@@ -597,19 +603,20 @@ async def main():
         return
 
     monitor = NuanicMonitor(
-        log_dir=args.log_dir,
-        imu_refresh_packets=args.imu_refresh,
-        clear_console=not args.no_clear,
-        enable_logging=args.enable_logging,
-        calibration_seconds=args.calibration_seconds,
-        target_hz=args.target_hz,
-        equalize_mode=args.equalize_mode,
-        attempt_ring_rate_control=(args.rate_control == "yes"),
-        force_hz=args.force_hz,
-        use_warmup=args.use_warmup,
-        warmup_delay=args.warmup_delay,
-        allow_reset_bt=args.reset_bt,
-    )
+            log_dir=args.log_dir,
+            imu_refresh_packets=args.imu_refresh,
+            clear_console=not args.no_clear,
+            enable_logging=args.enable_logging,
+            calibration_seconds=args.calibration_seconds,
+            target_hz=args.target_hz,
+            equalize_mode=args.equalize_mode,
+            attempt_ring_rate_control=(args.rate_control == "yes"),
+            force_hz=args.force_hz,
+            use_warmup=args.use_warmup,
+            warmup_delay=args.warmup_delay,
+            allow_reset_bt=args.reset_bt,
+            participant_id=args.participant_id,
+        )
 
     explicit_addresses = _parse_ring_addresses(args.ring_addr, args.ring_addrs)
     marker_hotkeys = _build_marker_hotkeys(args.marker_hotkey)
