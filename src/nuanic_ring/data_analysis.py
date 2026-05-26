@@ -333,7 +333,7 @@ def print_report(filepath: str) -> None:
         print(f"Range: {stress_stats['range']:.1f}%")
 
         peaks = detect_peaks(df["stress_percent"], threshold_std=1.5)
-        print(f"Peak count (> 1.5σ): {len(peaks)}")
+        print(f"Peak count (> 1.5 std dev): {len(peaks)}")
         if peaks:
             avg_peak = sum(p["value"] for p in peaks) / len(peaks)
             print(f"Average peak value: {avg_peak:.1f}%")

@@ -545,24 +545,25 @@ class NuanicMonitor:
                 row = (
                     self._base_row(state, "IMU_BATCH_468F")
                     + [
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        parsed_batch["clock"],
-                        parsed_batch["context"],
-                        parsed_batch["first_x"],
-                        parsed_batch["first_y"],
-                        parsed_batch["first_z"],
-                        f"{parsed_batch['motion_intensity']:.2f}",
-                        "",
-                        data[8:].hex(),
-                        data.hex(),
-                        "",
+                        "",  # 5: EDA_Raw_Value
+                        "",  # 6: Stress_Index
+                        "",  # 7: MM_Filtered_uS
+                        "",  # 8: MM_Arousal_Score
+                        "",  # 9: MM_Calibrated
+                        "",  # 10: Skin_Resistance_kOhm
+                        "",  # 11: Skin_Conductance_uS
+                        "",  # 12: D306_Clock
+                        "",  # 13: D306_Context
+                        parsed_batch["clock"],  # 14: IMU_Batch_Clock
+                        parsed_batch["context"],  # 15: IMU_Batch_Context
+                        parsed_batch["first_x"],  # 16: IMU_X0
+                        parsed_batch["first_y"],  # 17: IMU_Y0
+                        parsed_batch["first_z"],  # 18: IMU_Z0
+                        f"{parsed_batch['motion_intensity']:.2f}",  # 19: IMU_Motion_Intensity
+                        "",  # 20: State_Code
+                        data[8:].hex(),  # 21: payload_hex
+                        data.hex(),  # 22: full_packet_hex
+                        "",  # 23: decoded_fields
                     ]
                     + self._row_rate_tail(state, would_drop)
                 )
@@ -587,24 +588,25 @@ class NuanicMonitor:
                 row = (
                     self._base_row(state, "STATE_3C18")
                     + [
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        state_code if state_code is not None else "",
-                        data.hex(),
-                        data.hex(),
-                        "",
+                        "",  # 5: EDA_Raw_Value
+                        "",  # 6: Stress_Index
+                        "",  # 7: MM_Filtered_uS
+                        "",  # 8: MM_Arousal_Score
+                        "",  # 9: MM_Calibrated
+                        "",  # 10: Skin_Resistance_kOhm
+                        "",  # 11: Skin_Conductance_uS
+                        "",  # 12: D306_Clock
+                        "",  # 13: D306_Context
+                        "",  # 14: IMU_Batch_Clock
+                        "",  # 15: IMU_Batch_Context
+                        "",  # 16: IMU_X0
+                        "",  # 17: IMU_Y0
+                        "",  # 18: IMU_Z0
+                        "",  # 19: IMU_Motion_Intensity
+                        state_code if state_code is not None else "",  # 20: State_Code
+                        data.hex(),  # 21: payload_hex
+                        data.hex(),  # 22: full_packet_hex
+                        "",  # 23: decoded_fields
                     ]
                     + self._row_rate_tail(state, would_drop)
                 )
@@ -628,24 +630,25 @@ class NuanicMonitor:
                 row = (
                     self._base_row(state, "LIVE_EDA_42DC")
                     + [
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        data.hex(),
-                        data.hex(),
-                        json.dumps({"len": len(data)}),
+                        "",  # 5: EDA_Raw_Value
+                        "",  # 6: Stress_Index
+                        "",  # 7: MM_Filtered_uS
+                        "",  # 8: MM_Arousal_Score
+                        "",  # 9: MM_Calibrated
+                        "",  # 10: Skin_Resistance_kOhm
+                        "",  # 11: Skin_Conductance_uS
+                        "",  # 12: D306_Clock
+                        "",  # 13: D306_Context
+                        "",  # 14: IMU_Batch_Clock
+                        "",  # 15: IMU_Batch_Context
+                        "",  # 16: IMU_X0
+                        "",  # 17: IMU_Y0
+                        "",  # 18: IMU_Z0
+                        "",  # 19: IMU_Motion_Intensity
+                        "",  # 20: State_Code
+                        data.hex(),  # 21: payload_hex
+                        data.hex(),  # 22: full_packet_hex
+                        json.dumps({"len": len(data)}),  # 23: decoded_fields
                     ]
                     + self._row_rate_tail(state, would_drop)
                 )
