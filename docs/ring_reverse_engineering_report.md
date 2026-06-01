@@ -83,27 +83,28 @@ Current interpretation:
 
 In the captured session, transition to `02` coincided with immediate start of high-rate streams, and transition back to `01` coincided with stream stop.
 
-### 2. Real-Time Sensor + Quality Stream
+### 2. High-Rate EDA + Physiology Stream
 
 - **UUID:** `d306262b-c8c9-4c4b-9050-3a41dea706e5`
 - **Payload:** 16 bytes
-- **Frequency:** approximately 22-25 Hz in the latest run
+- **Frequency:** ~16 Hz (configurable via sample rate register)
 
-4x uint32 (little-endian) working layout hypothesis:
-- **Bytes 0-3:** monotonic packet clock/counter
-- **Bytes 4-7:** static context/session field (commonly `9C 01 00 00` in this run)
-- **Bytes 8-11:** dynamic physiological signal (EDA/stress candidate)
-- **Bytes 12-15:** contact/quality-like metric (observed at `0x64` then drifting downward)
+4x uint32 (little-endian) working layout:
+- **Bytes 0-3:** Monotonic packet clock/counter
+- **Bytes 4-7:** Context/session field
+- **Bytes 8-11:** Raw EDA Value
+- **Bytes 12-15:** DNE Stress Index
 
-### 3. Bulk Motion/IMU Stream
+### 3. Bulk Motion/IMU Batch Stream
 
 - **UUID:** `468f2717-6a7d-46f9-9eb7-f92aab208bae`
 - **Payload:** 92 bytes
-- **Frequency:** approximately 1 Hz
+- **Frequency:** ~1 Hz
 
 Current interpretation:
-- First 8 bytes carry timestamp/counter context.
-- Remaining 84 bytes are batched samples (likely one-second motion/IMU waveform payload).
+- **Bytes 0-3:** Clock
+- **Bytes 4-7:** Context
+- **Bytes 8-91:** Batched samples (14 tuples of 3x int16, representing X, Y, Z accelerometer data).
 
 ### 4. Silent/Event Stream
 
@@ -120,20 +121,24 @@ Current interpretation:
 
 ### ✅ Active Data Streams
 
-#### 1. **Stress Characteristic** (`468f2717-6a7d-46f9-9eb7-f92aab208bae`)
+#### 1. **High-Rate EDA + Physiology Stream** (`d306262b-c8c9-4c4b-9050-3a41dea706e5`)
+- **Frequency:** ~16 Hz (configurable)
+- **Packet Size:** 16 bytes fixed
+- **Structure:**
+  - Bytes 0-3: Clock (uint32)
+  - Bytes 4-7: Context (uint32)
+  - Bytes 8-11: Raw EDA Value (uint32, convertible to Resistance/Conductance)
+  - Bytes 12-15: DNE Stress Index (uint32)
+- **Interpretation:** This is the primary physiological data stream providing high-frequency raw EDA samples and a computed stress index.
+
+#### 2. **Bulk Motion/IMU Batch Stream** (`468f2717-6a7d-46f9-9eb7-f92aab208bae`)
 - **Frequency:** ~1 Hz
 - **Packet Size:** 92 bytes fixed
 - **Structure:**
-  - Byte 14: Stress percentage (0-255 mapped to %)
-  - Bytes 15-92: Waveform payload (77 uint8 values representing physiological signal)
-  - Rest: Metadata/timestamp data
-- **Interpretation:** This is maybe the EDA
-
-#### 2. **IMU Characteristic** (`d306262b-c8c9-4c4b-9050-3a41dea706e5`)
-- **Frequency:** 15.94 Hz
-- **Packet Size:** 16 bytes
-- **Data:** Accelerometer (3-axis) + timestamp
-- **Use Case:** Motion/activity detection
+  - Bytes 0-3: Clock (uint32)
+  - Bytes 4-7: Context (uint32)
+  - Bytes 8-91: 14 batched samples of (X, Y, Z) acceleration data (3x int16 each)
+- **Interpretation:** This stream delivers batched accelerometer data for motion and activity detection.
 
 ### ❌ Broken/Non-Functional Streams
 
@@ -164,22 +169,21 @@ The following characteristics accept writes and appear to be configuration regis
 
 ## Recommendations
 
-- **Stress Percentage** (byte 14 from stress characteristic)
-  - Aggregated stress level (0-100%)
-  - Updates at 1 Hz
-  - Use as overlay on waveform
+- **High-Rate EDA & Stress Index** (`d306262b-c8c9-4c4b-9050-3a41dea706e5`)
+  - Use this characteristic for real-time physiological monitoring.
+  - The raw EDA value can be converted directly into resistance (kOhm) and conductance (uS).
+  - The DNE stress index can be tracked as an arousal indicator alongside the raw EDA data.
+  - Recommended for visualization and detailed analysis.
 
-- **IMU Data** (acceleration)
-  - Useful for motion/activity context
-  - 16 Hz sample rate is good for motion capture
-
-## Current Waveform Viewer Status
+- **IMU Batch Stream** (`468f2717-6a7d-46f9-9eb7-f92aab208bae`)
+  - Useful for motion/activity context.
+  - Provides batched accelerometer data (14 samples per packet) at ~1 Hz, meaning the effective sampling rate is ~14 Hz.
 
 ## Conclusion
 
-The Nuanic ring **does transmit physiological data** via the "Stress" characteristic, but it's transmitted as a 77-byte waveform payload at 1 Hz rather than high-frequency raw EDA samples. This is sufficient for stress level monitoring and visualization, but not for detailed analysis.
+The Nuanic ring **does have a functioning separate high-rate raw EDA stream** (`d306262b`). This stream transmits raw EDA values and a computed stress index at ~16 Hz, making it fully suitable for detailed physiological analysis and real-time visualization.
 
-The ring **does not have** a functioning separate raw EDA stream. All physiological data is in the stress characteristic waveform payload.
+Additionally, the ring transmits batched IMU data at ~1 Hz (`468f2717`), providing motion and activity context alongside the physiological data.
 
 ---
 
