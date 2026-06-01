@@ -429,7 +429,7 @@ class NuanicMonitor:
 
         return inserted
 
-    def _make_imu_callback(self, mac: str):
+    def _make_stress_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
             try:
                 if not self.capture_armed:
@@ -514,7 +514,7 @@ class NuanicMonitor:
 
         return _cb
 
-    def _make_stress_callback(self, mac: str):
+    def _make_imu_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
             try:
                 if not self.capture_armed:

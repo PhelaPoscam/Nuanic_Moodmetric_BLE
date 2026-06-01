@@ -191,8 +191,8 @@ class NuanicWaveformViewer:
             print(f"[RATE] Requesting {self.target_hz} Hz sample rate...")
             await self.connector.attempt_set_sample_rate(target_hz=int(self.target_hz))
 
-        live_dna_ok = await self.connector.subscribe_to_imu(self._live_dna_callback)
-        imu_ok = await self.connector.subscribe_to_stress(self._imu_callback)
+        live_dna_ok = await self.connector.subscribe_to_stress(self._live_dna_callback)
+        imu_ok = await self.connector.subscribe_to_imu(self._imu_callback)
         live_eda_ok = await self.connector.subscribe_to_live_eda(
             self._live_eda_callback
         )
@@ -200,8 +200,8 @@ class NuanicWaveformViewer:
         if not (live_dna_ok and imu_ok and live_eda_ok):
             print("[WARN] Some telemetry streams failed to subscribe")
             if not live_dna_ok:
-                await self.connector.unsubscribe_from_imu()
                 await self.connector.unsubscribe_from_stress()
+                await self.connector.unsubscribe_from_imu()
                 await self.connector.unsubscribe_from_live_eda()
                 await self.connector.disconnect()
                 return False
@@ -218,8 +218,8 @@ class NuanicWaveformViewer:
 
     async def stop(self):
         self._running = False
-        await self.connector.unsubscribe_from_imu()
         await self.connector.unsubscribe_from_stress()
+        await self.connector.unsubscribe_from_imu()
         await self.connector.unsubscribe_from_live_eda()
         await self.connector.disconnect()
 

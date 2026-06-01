@@ -18,11 +18,13 @@ _ADDR_CACHE_FILE = Path(__file__).parents[3] / "data" / ".last_ring_addr"
 class NuanicConnector:
     """Handles BLE connections to one or many Nuanic/Moodmetric rings."""
 
-    # GATT UUIDs (Verified best-fit interpretations as of 2026-04)
+    # GATT UUIDs (Verified best-fit interpretations as of 2026-06)
     STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # Off-finger / on-finger state indicator stream
     STORAGE_UUID = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"  # Historical storage / buffer characteristic
     LIVE_EDA_UUID = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"  # Live notify stream (currently no reliable payload)
-    LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # High-rate motion / physiology stream (IMU/EDM)
+    LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # High-rate physiological stream (raw EDA + Stress Index) at ~16Hz
+    PHYSIOLOGY_UUID = LIVE_DNA_UUID
+    IMU_BATCH_UUID = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # Bulk motion / IMU batch stream (14-sample batches at ~1Hz)
     SET_TIME_UUID = (
         "dc9c31a7-fbd3-467a-8777-10900c423d3b"  # Writable config / timestamp register
     )
@@ -36,13 +38,13 @@ class NuanicConnector:
         "00002a19-0000-1000-8000-00805f9b34fb"  # Standard BLE Battery Service
     )
 
-    # Backward-compatible aliases used across the existing telemetry code.
+    # Core aliases used across the existing telemetry code.
     BATTERY_CHARACTERISTIC = BATTERY_UUID
-    IMU_CHARACTERISTIC = LIVE_DNA_UUID
+    IMU_CHARACTERISTIC = IMU_BATCH_UUID
     STATE_CHARACTERISTIC = STATE_UUID
     RAW_EDA_CHARACTERISTIC = STATE_CHARACTERISTIC
     MYSTERY_NOTIFY_CHARACTERISTIC = LIVE_EDA_UUID
-    STRESS_CHARACTERISTIC = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # 92-byte bulk waveform/motion stream (~1 Hz)
+    STRESS_CHARACTERISTIC = PHYSIOLOGY_UUID
 
     def __init__(
         self,

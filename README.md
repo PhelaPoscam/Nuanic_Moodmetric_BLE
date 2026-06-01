@@ -158,8 +158,8 @@ The verified GATT characteristic meanings are:
 | `3c180fcc-bfec-4b7c-8e52-1a37f123e449` | `STATE_CHARACTERISTIC` | Off-finger / on-finger state indicator stream |
 | `7c3b82e7-22b7-4cb6-8458-ba325edf6ede` | `STORAGE_UUID` | Historical storage / buffer characteristic |
 | `42dcb71b-1817-43bd-8ea3-7272780a1c9f` | `LIVE_EDA_UUID` | Live notify stream (no reliable payload) |
-| `d306262b-c8c9-4c4b-9050-3a41dea706e5` | `LIVE_DNA_UUID` / `IMU_STREAM` | High-rate physiological stream (raw EDA + Stress Index) at ~16Hz |
-| `468f2717-6a7d-46f9-9eb7-f92aab208bae` | `STRESS_CHARACTERISTIC` | Bulk motion / IMU batch stream (14-sample batches at ~1Hz) |
+| `d306262b-c8c9-4c4b-9050-3a41dea706e5` | `LIVE_DNA_UUID` / `STRESS_CHARACTERISTIC` | High-rate physiological stream (raw EDA + Stress Index) at ~16Hz |
+| `468f2717-6a7d-46f9-9eb7-f92aab208bae` | `IMU_CHARACTERISTIC` | Bulk motion / IMU batch stream (14-sample batches at ~1Hz) |
 | `dc9c31a7-fbd3-467a-8777-10900c423d3b` | `SET_TIME` | Writable config/timestamp register |
 | `516b0fb6-d861-4619-9dd0-0105e8b85128` | `SAMPLE_RATE` | Writable config register; rate-write effect is proven |
 | `3cce21a7-e602-4e02-8c52-1e0366c1c846` | `STORAGE_FORMAT` | Writable config register |
