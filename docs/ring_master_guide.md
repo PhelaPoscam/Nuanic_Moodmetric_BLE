@@ -117,6 +117,58 @@ nuanic-ring-discover --subscribe-core-streams --ring-profile auto
 
 ## What Lives Where
 
-- `README.md`: onboarding, command examples, full monitor CLI argument table, UUID mapping.
-- `docs/ring_master_guide.md` (this file): operational playbook.
-- `docs/ring_reverse_engineering_report.md`: packet-level reverse-engineering and historical interpretation notes.
+- [README.md](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/README.md): Quick start, installation, multi-ring commands, and code usage.
+- [docs/ring_master_guide.md](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/ring_master_guide.md) (this file): Operational playbook, full CLI argument references, and GATT UUID mappings.
+- [docs/csv_format.md](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/csv_format.md): Detail of output CSV columns, record types, physical conversions, and pandas parsing.
+- [docs/ring_reverse_engineering_report.md](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/ring_reverse_engineering_report.md): Low-level packet forensics, byte-mapping, and discovery diagnostics.
+
+---
+
+## 🛠️ CLI Argument Reference (`ring_monitor_cli.py`)
+
+| Argument | Description | Default |
+| :--- | :--- | :--- |
+| `--duration` | Total session length in seconds. | Unlimited |
+| `--ring-addrs` | Comma-separated list of MAC addresses to connect. | None |
+| `--monitor-all` | Connect to all discovered Nuanic rings. | False |
+| `--target-hz` | Desired sampling frequency in Hz (capped between 1 and 16 Hz). | 10.0 |
+| `--force-hz` | Bypass the 16Hz hardware capability safety warning. | False |
+| `--reset-bt` | Aggressively reset Windows BT radio on initial failure. | False |
+| `--log` / `--no-log` | Enable or disable CSV recording. | `--log` |
+| `--log-dir` | Folder for session CSV output. | `data/ring_logs` |
+| `--waveform` | Launch live Matplotlib plots instead of the TUI table. | False |
+| `--markers` | Enable runtime marker input (SPACE and single-key hotkeys, plus `/m LABEL` + Enter). | False |
+| `--marker-hotkey` | Add or override a single-key marker hotkey. Repeatable. | `SPACE=marker, S=stimulus_on, B=baseline_start, R=rest_start` |
+| `--post-analysis` | Print a scoring comparison vs proprietary DNE on exit. | No |
+| `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
+| `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.25 |
+| `--auto-reconnect` | Automaticaly retry on connection drop. | True |
+| `--calibration-seconds` | Wait time for Arousal Scorer baseline window. | 60 |
+| `--imu-refresh` | Batch size for dashboard IMU signal updates. | 5 |
+| `--ui-refresh-ms` | Dashboard UI redraw interval. | 200ms |
+| `--rate-control` | Attempt to write sample-rate configuration to ring. | `yes` |
+| `--equalize-mode` | Logic for handling rate mismatches (`off`, `log-only`, `enforce`). | `log-only` |
+| `--max-devices` | Cap the number of simultaneously monitored rings. | None |
+| `--scan-timeout` | Timeout per scan attempt. | 6.0s |
+| `--scan-attempts` | Number of scan attempts before giving up. | 3 |
+| `--warmup-delay` | Delay after firmware warmup before full connect. | 3.0s |
+| `--list-rings` | Scan and list available rings, then exit. | - |
+| `--discover` | Full GATT service discovery and characteristics dump. | - |
+
+---
+
+## 🔑 GATT UUID Mapping
+
+The verified GATT characteristic meanings are:
+
+| UUID | Current label | Verified interpretation |
+|---|---|---|
+| `3c180fcc-bfec-4b7c-8e52-1a37f123e449` | `STATE_CHARACTERISTIC` | Off-finger / on-finger state indicator stream |
+| `7c3b82e7-22b7-4cb6-8458-ba325edf6ede` | `STORAGE_UUID` | Historical storage / buffer characteristic |
+| `42dcb71b-1817-43bd-8ea3-7272780a1c9f` | `LIVE_EDA_UUID` | Live notify stream (no reliable payload) |
+| `d306262b-c8c9-4c4b-9050-3a41dea706e5` | `LIVE_DNA_UUID` / `STRESS_CHARACTERISTIC` | High-rate physiological stream (raw EDA + Stress Index) at ~16Hz |
+| `468f2717-6a7d-46f9-9eb7-f92aab208bae` | `IMU_CHARACTERISTIC` | Bulk motion / IMU batch stream (14-sample batches at ~1Hz) |
+| `dc9c31a7-fbd3-467a-8777-10900c423d3b` | `SET_TIME` | Writable config/timestamp register |
+| `516b0fb6-d861-4619-9dd0-0105e8b85128` | `SAMPLE_RATE` | Writable config register; rate-write effect is proven |
+| `3cce21a7-e602-4e02-8c52-1e0366c1c846` | `STORAGE_FORMAT` | Writable config register |
+
