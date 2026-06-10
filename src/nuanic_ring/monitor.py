@@ -63,6 +63,12 @@ class RingDeviceState:
     log_file: Optional[Path] = None
     log_queue: Optional[asyncio.Queue[List[Any]]] = None
     writer_task: Optional[asyncio.Task[None]] = None
+    stream_log_file: Optional[Path] = None
+    computed_log_file: Optional[Path] = None
+    stream_log_queue: Optional[asyncio.Queue[List[Any]]] = None
+    computed_log_queue: Optional[asyncio.Queue[List[Any]]] = None
+    stream_writer_task: Optional[asyncio.Task[None]] = None
+    computed_writer_task: Optional[asyncio.Task[None]] = None
     dropped_rows: int = 0
     marker_count: int = 0
 
@@ -98,6 +104,7 @@ class NuanicMonitor:
         imu_refresh_packets: int = 5,
         clear_console: bool = True,
         enable_logging: bool = True,
+        csv_layout: str = "combined",
         calibration_seconds: int = 60,
         target_hz: Optional[float] = None,
         equalize_mode: str = "off",
@@ -110,6 +117,9 @@ class NuanicMonitor:
     ):
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
+        if csv_layout not in {"combined", "split", "both"}:
+            raise ValueError("csv_layout must be one of: combined, split, both")
+        self.csv_layout = csv_layout
         self.force_hz = force_hz
         self.participant_id = participant_id
         if self.enable_logging:
@@ -191,23 +201,32 @@ class NuanicMonitor:
         self.device_states[mac_key] = state
 
         if self.enable_logging:
-            state.log_queue = asyncio.Queue(maxsize=5000)
+            if self.csv_layout in {"combined", "both"}:
+                state.log_queue = asyncio.Queue(maxsize=5000)
+            if self.csv_layout in {"split", "both"}:
+                state.stream_log_queue = asyncio.Queue(maxsize=5000)
+                state.computed_log_queue = asyncio.Queue(maxsize=5000)
             # writer_task will be created lazily in _initialize_log_file
 
         return state
 
-    def _initialize_log_file(self, state: RingDeviceState) -> None:
-        """Lazily initialize the CSV log file only when data starts arriving."""
-        if not self.enable_logging or state.log_file:
-            return
-
+    def _log_filename(self, state: RingDeviceState, suffix: str = "") -> str:
         timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
         safe_mac = state.mac.replace(":", "-")
         parts = ["SessionDate", timestamp]
         if self.participant_id:
             parts.append(self.participant_id)
         parts.append(f"ring-{safe_mac[-6:]}")
-        filename = "_".join(parts) + ".csv"
+        if suffix:
+            parts.append(suffix)
+        return "_".join(parts) + ".csv"
+
+    def _initialize_log_file(self, state: RingDeviceState) -> None:
+        """Lazily initialize the CSV log file only when data starts arriving."""
+        if not self.enable_logging or state.log_file:
+            return
+
+        filename = self._log_filename(state)
         state.log_file = self.log_dir / filename
 
         try:
@@ -253,20 +272,138 @@ class NuanicMonitor:
                     ]
                 )
             print(f"[LOG] Started lazy log for {state.mac}: {state.log_file.name}")
-            state.writer_task = asyncio.create_task(self._csv_writer_loop(state))
+            if state.log_queue:
+                state.writer_task = asyncio.create_task(
+                    self._csv_writer_loop(state, state.log_queue, state.log_file)
+                )
         except Exception as e:
             print(f"[LOG] Error initializing log for {state.mac}: {e}")
             state.log_file = None
 
-    async def _csv_writer_loop(self, state: RingDeviceState) -> None:
-        if not state.log_file or not state.log_queue:
+    def _initialize_split_log_files(self, state: RingDeviceState) -> None:
+        """Lazily initialize raw-stream and computed CSV files."""
+        if (
+            not self.enable_logging
+            or (state.stream_log_file and state.computed_log_file)
+        ):
+            return
+
+        stream_header = [
+            "timestamp",
+            "elapsed_ms",
+            "device_mac",
+            "connection_state",
+            "data_type",
+            "D306_Clock",
+            "D306_Context",
+            "EDA_Raw_Value",
+            "Stress_Index",
+            "IMU_Batch_Clock",
+            "IMU_Batch_Context",
+            "IMU_Sample_Count",
+            "IMU_Samples_XYZ",
+            "IMU_X0",
+            "IMU_Y0",
+            "IMU_Z0",
+            "State_Code",
+            "payload_hex",
+            "full_packet_hex",
+            "decoded_fields",
+            "marker_label",
+            "marker_source",
+        ]
+        computed_header = [
+            "timestamp",
+            "elapsed_ms",
+            "device_mac",
+            "connection_state",
+            "data_type",
+            "Source_D306_Clock",
+            "Source_D306_Context",
+            "Source_IMU_Batch_Clock",
+            "Source_IMU_Batch_Context",
+            "Skin_Resistance_kOhm",
+            "Skin_Conductance_uS",
+            "MM_Filtered_uS",
+            "SCR_Frequency_Per_Min",
+            "SCR_Amplitude",
+            "MM_Arousal_Score",
+            "MM_Calibrated",
+            "IMU_Motion_Intensity",
+            "D306_Observed_Hz",
+            "IMU_Observed_Hz",
+            "Rate_Target_Hz",
+            "Rate_Control_Status",
+            "Equalize_Mode",
+            "Equalize_WouldDrop",
+            "marker_label",
+            "marker_source",
+        ]
+
+        try:
+            if not state.stream_log_file:
+                state.stream_log_file = self.log_dir / self._log_filename(
+                    state, "streamed"
+                )
+                with open(
+                    state.stream_log_file,
+                    "w",
+                    newline="",
+                    encoding="utf-8",
+                ) as file:
+                    csv.writer(file).writerow(stream_header)
+                if state.stream_log_queue:
+                    state.stream_writer_task = asyncio.create_task(
+                        self._csv_writer_loop(
+                            state,
+                            state.stream_log_queue,
+                            state.stream_log_file,
+                        )
+                    )
+
+            if not state.computed_log_file:
+                state.computed_log_file = self.log_dir / self._log_filename(
+                    state, "computed"
+                )
+                with open(
+                    state.computed_log_file,
+                    "w",
+                    newline="",
+                    encoding="utf-8",
+                ) as file:
+                    csv.writer(file).writerow(computed_header)
+                if state.computed_log_queue:
+                    state.computed_writer_task = asyncio.create_task(
+                        self._csv_writer_loop(
+                            state,
+                            state.computed_log_queue,
+                            state.computed_log_file,
+                        )
+                    )
+
+            print(
+                f"[LOG] Started split logs for {state.mac}: "
+                f"{state.stream_log_file.name}, {state.computed_log_file.name}"
+            )
+        except Exception as e:
+            print(f"[LOG] Error initializing split logs for {state.mac}: {e}")
+            state.stream_log_file = None
+            state.computed_log_file = None
+
+    async def _csv_writer_loop(
+        self,
+        state: RingDeviceState,
+        queue: asyncio.Queue[List[Any]],
+        log_file: Path,
+    ) -> None:
+        if not log_file or not queue:
             return
 
         batch: List[List[Any]] = []
-        while self.running or not state.log_queue.empty():
+        while self.running or not queue.empty():
             try:
                 row = await asyncio.wait_for(
-                    state.log_queue.get(),
+                    queue.get(),
                     timeout=0.2,
                 )
                 batch.append(row)
@@ -279,7 +416,7 @@ class NuanicMonitor:
                 continue
 
             with open(
-                state.log_file,
+                log_file,
                 "a",
                 newline="",
                 encoding="utf-8",
@@ -297,6 +434,30 @@ class NuanicMonitor:
 
         try:
             state.log_queue.put_nowait(row)
+        except asyncio.QueueFull:
+            state.dropped_rows += 1
+
+    def _enqueue_stream_log(self, state: RingDeviceState, row: List[Any]) -> None:
+        if not self.enable_logging or not state.stream_log_queue:
+            return
+
+        if not state.stream_log_file or not state.computed_log_file:
+            self._initialize_split_log_files(state)
+
+        try:
+            state.stream_log_queue.put_nowait(row)
+        except asyncio.QueueFull:
+            state.dropped_rows += 1
+
+    def _enqueue_computed_log(self, state: RingDeviceState, row: List[Any]) -> None:
+        if not self.enable_logging or not state.computed_log_queue:
+            return
+
+        if not state.stream_log_file or not state.computed_log_file:
+            self._initialize_split_log_files(state)
+
+        try:
+            state.computed_log_queue.put_nowait(row)
         except asyncio.QueueFull:
             state.dropped_rows += 1
 
@@ -424,6 +585,56 @@ class NuanicMonitor:
                 + self._row_rate_tail(state, would_drop=False)
             )
             self._enqueue_log(state, row)
+
+            stream_row = (
+                self._base_row(state, "MARKER")
+                + [
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    clean_label,
+                    source,
+                ]
+            )
+            computed_row = (
+                self._base_row(state, "MARKER")
+                + [
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    clean_label,
+                    source,
+                ]
+            )
+            self._enqueue_stream_log(state, stream_row)
+            self._enqueue_computed_log(state, computed_row)
             state.marker_count += 1
             inserted += 1
 
@@ -507,6 +718,53 @@ class NuanicMonitor:
                 )
                 self._enqueue_log(state, row)
 
+                stream_row = (
+                    self._base_row(state, "D306_EDA")
+                    + [
+                        clock,
+                        context,
+                        eda_value,
+                        dne_stress_index,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        data.hex(),
+                        data.hex(),
+                        "",
+                        "",
+                        "",
+                    ]
+                )
+                computed_row = (
+                    self._base_row(state, "D306_EDA_COMPUTED")
+                    + [
+                        clock,
+                        context,
+                        "",
+                        "",
+                        f"{resistance_kohm:.4f}",
+                        f"{conductance_us:.4f}",
+                        f"{filtered_us:.4f}",
+                        f"{freq:.4f}",
+                        f"{amp:.4f}",
+                        f"{state.arousal_score:.2f}",
+                        "1" if score_state["calibrated"] else "0",
+                        "",
+                    ]
+                    + self._row_rate_tail(state, would_drop)
+                    + [
+                        "",
+                        "",
+                    ]
+                )
+                self._enqueue_stream_log(state, stream_row)
+                self._enqueue_computed_log(state, computed_row)
+
                 # Toggle the heartbeat for visual feedback
                 state.heartbeat_tick = not state.heartbeat_tick
             except Exception:
@@ -568,6 +826,54 @@ class NuanicMonitor:
                     + self._row_rate_tail(state, would_drop)
                 )
                 self._enqueue_log(state, row)
+
+                imu_samples_json = json.dumps(parsed_batch["samples"])
+                stream_row = (
+                    self._base_row(state, "IMU_BATCH_468F")
+                    + [
+                        "",
+                        "",
+                        "",
+                        "",
+                        parsed_batch["clock"],
+                        parsed_batch["context"],
+                        len(parsed_batch["samples"]),
+                        imu_samples_json,
+                        parsed_batch["first_x"],
+                        parsed_batch["first_y"],
+                        parsed_batch["first_z"],
+                        "",
+                        data[8:].hex(),
+                        data.hex(),
+                        "",
+                        "",
+                        "",
+                    ]
+                )
+                computed_row = (
+                    self._base_row(state, "IMU_BATCH_468F_COMPUTED")
+                    + [
+                        "",
+                        "",
+                        parsed_batch["clock"],
+                        parsed_batch["context"],
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        f"{parsed_batch['motion_intensity']:.2f}",
+                    ]
+                    + self._row_rate_tail(state, would_drop)
+                    + [
+                        "",
+                        "",
+                    ]
+                )
+                self._enqueue_stream_log(state, stream_row)
+                self._enqueue_computed_log(state, computed_row)
             except Exception:
                 pass
 
@@ -611,6 +917,30 @@ class NuanicMonitor:
                     + self._row_rate_tail(state, would_drop)
                 )
                 self._enqueue_log(state, row)
+
+                stream_row = (
+                    self._base_row(state, "STATE_3C18")
+                    + [
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        state_code if state_code is not None else "",
+                        data.hex(),
+                        data.hex(),
+                        "",
+                        "",
+                        "",
+                    ]
+                )
+                self._enqueue_stream_log(state, stream_row)
             except Exception:
                 pass
 
@@ -653,6 +983,30 @@ class NuanicMonitor:
                     + self._row_rate_tail(state, would_drop)
                 )
                 self._enqueue_log(state, row)
+
+                stream_row = (
+                    self._base_row(state, "LIVE_EDA_42DC")
+                    + [
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        data.hex(),
+                        data.hex(),
+                        json.dumps({"len": len(data)}),
+                        "",
+                        "",
+                    ]
+                )
+                self._enqueue_stream_log(state, stream_row)
             except Exception:
                 pass
 
@@ -948,11 +1302,16 @@ class NuanicMonitor:
 
         # Surface dropped-row warnings at session end
         for state in self.device_states.values():
-            if state.writer_task:
-                try:
-                    await state.writer_task
-                except asyncio.CancelledError:
-                    pass
+            for task in (
+                state.writer_task,
+                state.stream_writer_task,
+                state.computed_writer_task,
+            ):
+                if task:
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
             if state.dropped_rows > 0:
                 print(
                     f"[WARN] {state.mac}: {state.dropped_rows} log rows "

@@ -314,6 +314,15 @@ Examples:
         help="Disable CSV logging",
     )
     parser.set_defaults(enable_logging=True)
+    parser.add_argument(
+        "--csv-layout",
+        choices=["combined", "split", "both"],
+        default="combined",
+        help=(
+            "CSV output layout: combined legacy file, split streamed/computed "
+            "files, or both (default: combined)"
+        ),
+    )
 
     parser.add_argument(
         "--imu-refresh",
@@ -538,7 +547,7 @@ async def main():
         ascii_box = box.ASCII
 
     args = parser.parse_args()
-    console = Console(force_terminal=True, soft_wrap=True)
+    console = Console(force_terminal=True)
 
     target_addresses = []
     if args.ring_addrs:
@@ -607,6 +616,7 @@ async def main():
         imu_refresh_packets=args.imu_refresh,
         clear_console=not args.no_clear,
         enable_logging=args.enable_logging,
+        csv_layout=args.csv_layout,
         calibration_seconds=args.calibration_seconds,
         target_hz=args.target_hz,
         equalize_mode=args.equalize_mode,

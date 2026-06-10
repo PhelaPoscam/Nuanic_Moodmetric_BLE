@@ -156,8 +156,13 @@ def analyze_latest_ring_logs(
     if not root.exists():
         return []
 
+    all_files = root.glob("*ring*.csv")
+    csv_files = [
+        p for p in all_files
+        if not (p.name.endswith("_streamed.csv") or p.name.endswith("_computed.csv"))
+    ]
     csv_files = sorted(
-        root.glob("ring_*.csv"),
+        csv_files,
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )[: max(0, int(latest_n))]
