@@ -16,11 +16,19 @@ SessionDate_DD-MM-YYYY_HH-MM-SS_[ParticipantID_]ring-<Last6MAC>.csv
 ```
 *Example:* `SessionDate_08-06-2026_10-54-28_ring-72F207.csv`
 
+The monitor supports three CSV layouts:
+
+- `--csv-layout combined` writes the legacy mixed CSV shown below.
+- `--csv-layout split` writes two files per ring:
+  - `..._streamed.csv`: only ring-native fields plus raw payloads and marker rows.
+  - `..._computed.csv`: locally computed physiology, motion, calibration, and rate diagnostics plus marker rows.
+- `--csv-layout both` writes the legacy combined CSV and the two split files.
+
 ---
 
 ## 📋 Column Reference Table
 
-The CSV contains a fixed set of **30 columns**. Because the ring streams telemetry from multiple sensors asynchronously, the file uses a **mixed-row format** where columns are selectively populated depending on the row's `data_type`.
+The legacy combined CSV contains a fixed set of **30 columns**. Because the ring streams telemetry from multiple sensors asynchronously, the file uses a **mixed-row format** where columns are selectively populated depending on the row's `data_type`.
 
 | # | Column Name | Data Type | Description |
 | :--- | :--- | :--- | :--- |

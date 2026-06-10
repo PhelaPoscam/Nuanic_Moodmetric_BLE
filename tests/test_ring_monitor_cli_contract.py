@@ -17,6 +17,7 @@ def test_cli_defaults_match_documented_values():
     assert args.ui_refresh_ms == 200
     assert args.rate_control == "yes"
     assert args.equalize_mode == "log-only"
+    assert args.csv_layout == "combined"
     assert args.scan_timeout == 6.0
     assert args.scan_attempts == 3
     assert args.warmup_delay == 3.0
