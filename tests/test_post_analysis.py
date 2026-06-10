@@ -8,29 +8,38 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nuanic_ring.post_analysis import analyze_latest_ring_logs
 
+
 def test_analyze_latest_ring_logs_file_selection():
     with tempfile.TemporaryDirectory() as tmpdir:
         log_dir = Path(tmpdir)
 
         # Create dummy CSV contents with headers
-        dummy_df = pd.DataFrame({
-            "timestamp": ["2026-06-10T09:00:00.000"],
-            "elapsed_ms": [1000],
-            "device_mac": ["AA:BB:CC:DD:EE:FF"],
-            "connection_state": ["connected"],
-            "data_type": ["D306_EDA"],
-            "MM_Arousal_Score": [50.0],
-            "Stress_Index": [45],
-            "MM_Calibrated": [1],
-            "D306_Observed_Hz": [16.0],
-            "IMU_Observed_Hz": [1.0]
-        })
+        dummy_df = pd.DataFrame(
+            {
+                "timestamp": ["2026-06-10T09:00:00.000"],
+                "elapsed_ms": [1000],
+                "device_mac": ["AA:BB:CC:DD:EE:FF"],
+                "connection_state": ["connected"],
+                "data_type": ["D306_EDA"],
+                "MM_Arousal_Score": [50.0],
+                "Stress_Index": [45],
+                "MM_Calibrated": [1],
+                "D306_Observed_Hz": [16.0],
+                "IMU_Observed_Hz": [1.0],
+            }
+        )
 
         # File names to test
         legacy_file = log_dir / "ring_AA-BB-CC-DD-EE-FF_2026-06-10_08-00-00.csv"
-        new_combined_file = log_dir / "SessionDate_10-06-2026_09-00-00_P01_ring-E34502.csv"
-        streamed_file = log_dir / "SessionDate_10-06-2026_09-00-00_P01_ring-E34502_streamed.csv"
-        computed_file = log_dir / "SessionDate_10-06-2026_09-00-00_P01_ring-E34502_computed.csv"
+        new_combined_file = (
+            log_dir / "SessionDate_10-06-2026_09-00-00_P01_ring-E34502.csv"
+        )
+        streamed_file = (
+            log_dir / "SessionDate_10-06-2026_09-00-00_P01_ring-E34502_streamed.csv"
+        )
+        computed_file = (
+            log_dir / "SessionDate_10-06-2026_09-00-00_P01_ring-E34502_computed.csv"
+        )
         other_file = log_dir / "random_file.csv"
 
         # Write files

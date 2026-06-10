@@ -158,7 +158,8 @@ def analyze_latest_ring_logs(
 
     all_files = root.glob("*ring*.csv")
     csv_files = [
-        p for p in all_files
+        p
+        for p in all_files
         if not (p.name.endswith("_streamed.csv") or p.name.endswith("_computed.csv"))
     ]
     csv_files = sorted(

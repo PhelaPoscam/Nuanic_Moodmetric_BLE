@@ -282,9 +282,8 @@ class NuanicMonitor:
 
     def _initialize_split_log_files(self, state: RingDeviceState) -> None:
         """Lazily initialize raw-stream and computed CSV files."""
-        if (
-            not self.enable_logging
-            or (state.stream_log_file and state.computed_log_file)
+        if not self.enable_logging or (
+            state.stream_log_file and state.computed_log_file
         ):
             return
 
@@ -586,53 +585,47 @@ class NuanicMonitor:
             )
             self._enqueue_log(state, row)
 
-            stream_row = (
-                self._base_row(state, "MARKER")
-                + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    clean_label,
-                    source,
-                ]
-            )
-            computed_row = (
-                self._base_row(state, "MARKER")
-                + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    clean_label,
-                    source,
-                ]
-            )
+            stream_row = self._base_row(state, "MARKER") + [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                clean_label,
+                source,
+            ]
+            computed_row = self._base_row(state, "MARKER") + [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                clean_label,
+                source,
+            ]
             self._enqueue_stream_log(state, stream_row)
             self._enqueue_computed_log(state, computed_row)
             state.marker_count += 1
@@ -718,28 +711,25 @@ class NuanicMonitor:
                 )
                 self._enqueue_log(state, row)
 
-                stream_row = (
-                    self._base_row(state, "D306_EDA")
-                    + [
-                        clock,
-                        context,
-                        eda_value,
-                        dne_stress_index,
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        data.hex(),
-                        data.hex(),
-                        "",
-                        "",
-                        "",
-                    ]
-                )
+                stream_row = self._base_row(state, "D306_EDA") + [
+                    clock,
+                    context,
+                    eda_value,
+                    dne_stress_index,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    data.hex(),
+                    data.hex(),
+                    "",
+                    "",
+                    "",
+                ]
                 computed_row = (
                     self._base_row(state, "D306_EDA_COMPUTED")
                     + [
@@ -828,28 +818,25 @@ class NuanicMonitor:
                 self._enqueue_log(state, row)
 
                 imu_samples_json = json.dumps(parsed_batch["samples"])
-                stream_row = (
-                    self._base_row(state, "IMU_BATCH_468F")
-                    + [
-                        "",
-                        "",
-                        "",
-                        "",
-                        parsed_batch["clock"],
-                        parsed_batch["context"],
-                        len(parsed_batch["samples"]),
-                        imu_samples_json,
-                        parsed_batch["first_x"],
-                        parsed_batch["first_y"],
-                        parsed_batch["first_z"],
-                        "",
-                        data[8:].hex(),
-                        data.hex(),
-                        "",
-                        "",
-                        "",
-                    ]
-                )
+                stream_row = self._base_row(state, "IMU_BATCH_468F") + [
+                    "",
+                    "",
+                    "",
+                    "",
+                    parsed_batch["clock"],
+                    parsed_batch["context"],
+                    len(parsed_batch["samples"]),
+                    imu_samples_json,
+                    parsed_batch["first_x"],
+                    parsed_batch["first_y"],
+                    parsed_batch["first_z"],
+                    "",
+                    data[8:].hex(),
+                    data.hex(),
+                    "",
+                    "",
+                    "",
+                ]
                 computed_row = (
                     self._base_row(state, "IMU_BATCH_468F_COMPUTED")
                     + [
@@ -918,28 +905,25 @@ class NuanicMonitor:
                 )
                 self._enqueue_log(state, row)
 
-                stream_row = (
-                    self._base_row(state, "STATE_3C18")
-                    + [
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        state_code if state_code is not None else "",
-                        data.hex(),
-                        data.hex(),
-                        "",
-                        "",
-                        "",
-                    ]
-                )
+                stream_row = self._base_row(state, "STATE_3C18") + [
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    state_code if state_code is not None else "",
+                    data.hex(),
+                    data.hex(),
+                    "",
+                    "",
+                    "",
+                ]
                 self._enqueue_stream_log(state, stream_row)
             except Exception:
                 pass
@@ -984,28 +968,25 @@ class NuanicMonitor:
                 )
                 self._enqueue_log(state, row)
 
-                stream_row = (
-                    self._base_row(state, "LIVE_EDA_42DC")
-                    + [
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        data.hex(),
-                        data.hex(),
-                        json.dumps({"len": len(data)}),
-                        "",
-                        "",
-                    ]
-                )
+                stream_row = self._base_row(state, "LIVE_EDA_42DC") + [
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    data.hex(),
+                    data.hex(),
+                    json.dumps({"len": len(data)}),
+                    "",
+                    "",
+                ]
                 self._enqueue_stream_log(state, stream_row)
             except Exception:
                 pass
