@@ -3,7 +3,7 @@
 import math
 from collections import deque
 
-import numpy as np
+import statistics
 from scipy import signal
 
 
@@ -59,7 +59,7 @@ class SignalConditioner:
         self.median_buffer.append(value)
 
         # 1. Median Filter (strips short impulse artifacts)
-        med_val = float(np.median(self.median_buffer))
+        med_val = float(statistics.median(self.median_buffer))
 
         # 2. Butterworth Low-Pass (smooths the waveform)
         filtered_val, self.z = signal.lfilter(self.b, self.a, [med_val], zi=self.z)
