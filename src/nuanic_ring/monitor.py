@@ -221,72 +221,74 @@ class NuanicMonitor:
             parts.append(suffix)
         return "_".join(parts) + ".csv"
 
-    def _initialize_log_file(self, state: RingDeviceState) -> None:
-        """Lazily initialize the CSV log file only when data starts arriving."""
-        if not self.enable_logging or state.log_file:
+    def _initialize_single_log(
+        self,
+        state: RingDeviceState,
+        suffix: str,
+        header: List[str],
+        file_attr: str,
+        queue_attr: str,
+        task_attr: str,
+    ) -> None:
+        if not self.enable_logging or getattr(state, file_attr):
             return
-
-        filename = self._log_filename(state)
-        state.log_file = self.log_dir / filename
-
+        filename = self._log_filename(state, suffix)
+        file_path = self.log_dir / filename
+        setattr(state, file_attr, file_path)
         try:
-            with open(
-                state.log_file,
-                "w",
-                newline="",
-                encoding="utf-8",
-            ) as file:
-                writer = csv.writer(file)
-                writer.writerow(
-                    [
-                        "timestamp",
-                        "elapsed_ms",
-                        "device_mac",
-                        "connection_state",
-                        "data_type",
-                        "EDA_Raw_Value",
-                        "Stress_Index",
-                        "MM_Filtered_uS",
-                        "MM_Arousal_Score",
-                        "MM_Calibrated",
-                        "Skin_Resistance_kOhm",
-                        "Skin_Conductance_uS",
-                        "D306_Clock",
-                        "D306_Context",
-                        "IMU_Batch_Clock",
-                        "IMU_Batch_Context",
-                        "IMU_X0",
-                        "IMU_Y0",
-                        "IMU_Z0",
-                        "IMU_Motion_Intensity",
-                        "State_Code",
-                        "payload_hex",
-                        "full_packet_hex",
-                        "decoded_fields",
-                        "D306_Observed_Hz",
-                        "IMU_Observed_Hz",
-                        "Rate_Target_Hz",
-                        "Rate_Control_Status",
-                        "Equalize_Mode",
-                        "Equalize_WouldDrop",
-                    ]
+            with open(file_path, "w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(header)
+            queue = getattr(state, queue_attr)
+            if queue:
+                task = asyncio.create_task(
+                    self._csv_writer_loop(state, queue, file_path)
                 )
-            print(f"[LOG] Started lazy log for {state.mac}: {state.log_file.name}")
-            if state.log_queue:
-                state.writer_task = asyncio.create_task(
-                    self._csv_writer_loop(state, state.log_queue, state.log_file)
-                )
+                setattr(state, task_attr, task)
+            print(f"[LOG] Started log for {state.mac}: {filename}")
         except Exception as e:
             print(f"[LOG] Error initializing log for {state.mac}: {e}")
-            state.log_file = None
+            setattr(state, file_attr, None)
+
+    def _initialize_log_file(self, state: RingDeviceState) -> None:
+        """Lazily initialize the CSV log file only when data starts arriving."""
+        header = [
+            "timestamp",
+            "elapsed_ms",
+            "device_mac",
+            "connection_state",
+            "data_type",
+            "EDA_Raw_Value",
+            "Stress_Index",
+            "MM_Filtered_uS",
+            "MM_Arousal_Score",
+            "MM_Calibrated",
+            "Skin_Resistance_kOhm",
+            "Skin_Conductance_uS",
+            "D306_Clock",
+            "D306_Context",
+            "IMU_Batch_Clock",
+            "IMU_Batch_Context",
+            "IMU_X0",
+            "IMU_Y0",
+            "IMU_Z0",
+            "IMU_Motion_Intensity",
+            "State_Code",
+            "payload_hex",
+            "full_packet_hex",
+            "decoded_fields",
+            "D306_Observed_Hz",
+            "IMU_Observed_Hz",
+            "Rate_Target_Hz",
+            "Rate_Control_Status",
+            "Equalize_Mode",
+            "Equalize_WouldDrop",
+        ]
+        self._initialize_single_log(
+            state, "", header, "log_file", "log_queue", "writer_task"
+        )
 
     def _initialize_split_log_files(self, state: RingDeviceState) -> None:
         """Lazily initialize raw-stream and computed CSV files."""
-        if not self.enable_logging or (
-            state.stream_log_file and state.computed_log_file
-        ):
-            return
-
         stream_header = [
             "timestamp",
             "elapsed_ms",
@@ -338,56 +340,22 @@ class NuanicMonitor:
             "marker_label",
             "marker_source",
         ]
-
-        try:
-            if not state.stream_log_file:
-                state.stream_log_file = self.log_dir / self._log_filename(
-                    state, "streamed"
-                )
-                with open(
-                    state.stream_log_file,
-                    "w",
-                    newline="",
-                    encoding="utf-8",
-                ) as file:
-                    csv.writer(file).writerow(stream_header)
-                if state.stream_log_queue:
-                    state.stream_writer_task = asyncio.create_task(
-                        self._csv_writer_loop(
-                            state,
-                            state.stream_log_queue,
-                            state.stream_log_file,
-                        )
-                    )
-
-            if not state.computed_log_file:
-                state.computed_log_file = self.log_dir / self._log_filename(
-                    state, "computed"
-                )
-                with open(
-                    state.computed_log_file,
-                    "w",
-                    newline="",
-                    encoding="utf-8",
-                ) as file:
-                    csv.writer(file).writerow(computed_header)
-                if state.computed_log_queue:
-                    state.computed_writer_task = asyncio.create_task(
-                        self._csv_writer_loop(
-                            state,
-                            state.computed_log_queue,
-                            state.computed_log_file,
-                        )
-                    )
-
-            print(
-                f"[LOG] Started split logs for {state.mac}: "
-                f"{state.stream_log_file.name}, {state.computed_log_file.name}"
-            )
-        except Exception as e:
-            print(f"[LOG] Error initializing split logs for {state.mac}: {e}")
-            state.stream_log_file = None
-            state.computed_log_file = None
+        self._initialize_single_log(
+            state,
+            "streamed",
+            stream_header,
+            "stream_log_file",
+            "stream_log_queue",
+            "stream_writer_task",
+        )
+        self._initialize_single_log(
+            state,
+            "computed",
+            computed_header,
+            "computed_log_file",
+            "computed_log_queue",
+            "computed_writer_task",
+        )
 
     async def _csv_writer_loop(
         self,

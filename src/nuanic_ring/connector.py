@@ -745,172 +745,14 @@ class NuanicConnector:
             )  # Give Windows driver time to process the handle closure
 
     async def connect(self):
-        """Connect to Nuanic ring with automatic retry and recovery.
-
-        If no target_address is set, shows interactive menu to select ring.
-
-        Connection Flow:
-        1. If needed, let user select which ring to connect to
-        2. Scan for device (with retries)
-        3. Establish BLE connection
-        4. Perform pairing (if needed)
-        5. Return success
-        """
+        """Connect to Nuanic ring with automatic retry and recovery."""
         await self._cleanup_client()
-
-        # If no target address specified, prompt user to select
         if not self.target_address:
             selected = await self.select_ring_interactive()
             if not selected:
                 print("[FAIL] No ring selected\n")
                 return False
-
-        search_label = (
-            f"'{self.target_address}'" if self.target_address else "(any available)"
-        )
-        print(f"[INIT] Connecting to Nuanic ring {search_label}...")
-
-        # Connection logic is wrapped in a try...finally to ensure absolute safety
-        # against crashes leaving zombie connections open.
-        try:
-            # If a concrete device object was selected from the latest scan, try it first.
-            # This avoids a second scan/match cycle that can fail when BLE private MAC rotates.
-            if self.device and (
-                not self.target_address
-                or self.device.address.lower() == self.target_address.lower()
-            ):
-                print("[CONN] Trying selected device directly...", end=" ", flush=True)
-                try:
-                    self._disconnect_event.clear()
-                    self.client = self._create_bleak_client(self.device)
-                    await self.client.connect()
-                    print("[OK] Connected")
-
-                    if self.pair_on_connect:
-                        print("[PAIR] Requested via BleakClient(pair=True)")
-                    else:
-                        print("[PAIR] Establishing encryption...", end=" ", flush=True)
-                        try:
-                            await self.client.pair()
-                            print("[OK] Paired")
-                        except Exception:
-                            print("[INFO] Pairing not available")
-
-                    if not getattr(self.client, "is_connected", False):
-                        print("[RETRY] Link dropped right after connect")
-                        await self._cleanup_client()
-                    else:
-                        print("\n[OK] Connection established!\n")
-                        address = str(self.client.address).upper()
-                        self.clients[address] = self.client
-                        if self.device is not None:
-                            self.devices[address] = self.device
-                        self._save_last_address(self.client.address)
-                        return True
-                except Exception as e:
-                    print(f"[RETRY] {e}")
-                    await self._cleanup_client()
-
-            for attempt in range(1, self.max_connect_attempts + 1):
-                # Step 1: Find device via scan
-                print(
-                    f"\n[SCAN {attempt}/{self.max_connect_attempts}] Searching for device...",
-                    end=" ",
-                    flush=True,
-                )
-                scan_ok = await self.find_device()
-                if not scan_ok:
-                    print("[NOT FOUND]")
-                    if self.target_address and attempt == 1:
-                        print(
-                            "[HINT] Device not in scan results — may already be bonded to Windows "
-                            "or using a rotating MAC. Trying direct address connection..."
-                        )
-
-                # Step 2: Connect — use scanned device object when available, otherwise
-                # connect by address string directly (works for Windows-bonded devices
-                # that are invisible to BLE scan).
-                connect_target = self.device if scan_ok else self.target_address
-                if connect_target is None:
-                    if attempt < self.max_connect_attempts:
-                        print(f"[WAIT] Pausing before retry...")
-                        await asyncio.sleep(self.connect_backoff_seconds)
-                    continue
-
-                if scan_ok:
-                    print(f"[OK] Found: {self.device.name}")
-
-                print(
-                    f"[CONN {attempt}/{self.max_connect_attempts}] Connecting to BLE device...",
-                    end=" ",
-                    flush=True,
-                )
-                try:
-                    self._disconnect_event.clear()
-                    self.client = self._create_bleak_client(connect_target)
-                    await self.client.connect()
-                    print("[OK] Connected")
-                except asyncio.TimeoutError:
-                    print(f"[TIMEOUT] ({self.timeout}s)")
-                    await self._cleanup_client()
-                    if attempt < self.max_connect_attempts:
-                        print(f"[WAIT] Resetting BLE and retrying...")
-                        await asyncio.sleep(self.connect_backoff_seconds)
-                    continue
-                except Exception as e:
-                    print(f"[ERROR] {e}")
-                    await self._cleanup_client()
-                    if attempt < self.max_connect_attempts:
-                        print(f"[WAIT] Resetting BLE and retrying...")
-                        await asyncio.sleep(self.connect_backoff_seconds)
-                    continue
-
-                # Step 3: Pair (optional)
-                if self.pair_on_connect:
-                    print(
-                        f"[PAIR {attempt}/{self.max_connect_attempts}] Requested via BleakClient(pair=True)"
-                    )
-                else:
-                    print(
-                        f"[PAIR {attempt}/{self.max_connect_attempts}] Establishing encryption...",
-                        end=" ",
-                        flush=True,
-                    )
-                    try:
-                        await self.client.pair()
-                        print("[OK] Paired")
-                    except Exception as e:
-                        # Pairing may fail if already paired - this is OK
-                        print(f"[INFO] Pairing not available")
-
-                if not getattr(self.client, "is_connected", False):
-                    print("[RETRY] Link dropped right after connect")
-                    await self._cleanup_client()
-                    if attempt < self.max_connect_attempts:
-                        print(f"[WAIT] Retrying after disconnect...")
-                        await asyncio.sleep(self.connect_backoff_seconds)
-                    continue
-
-                # Success!
-                print(f"\n[OK] Connection established!\n")
-                address = str(self.client.address).upper()
-                self.clients[address] = self.client
-                if self.device is not None:
-                    self.devices[address] = self.device
-                self._save_last_address(self.client.address)
-                return True
-
-            # All attempts failed
-            print(
-                f"\n[FAIL] Could not connect after {self.max_connect_attempts} attempts\n"
-            )
-            return False
-
-        except KeyboardInterrupt:
-            # Explicitly catch KeyboardInterrupt to ensure cleanup fires gracefully
-            print("\n[INFO] Connect aborted by user.")
-            await self._cleanup_client()
-            raise
+        return await self.connect_device(self.target_address, device=self.device)
 
     async def discover_all_matching_rings(
         self,
@@ -1007,7 +849,7 @@ class NuanicConnector:
                 return True
             except Exception as e:
                 print(
-                    f"[CONN-FAIL] {address} attempt {attempt}/{self.max_connect_attempts}: {e}"
+                    f"[CONN-FAIL] {address} attempt {attempt}/{self.max_connect_attempts}: {type(e).__name__}: {e}"
                 )
                 try:
                     await client.disconnect()
@@ -1169,28 +1011,42 @@ class NuanicConnector:
                 addrs.append(address)
         return addrs
 
+    async def _subscribe(
+        self,
+        char_uuid: str,
+        callback: Callable[[Any, bytes], None],
+        address: Optional[str] = None,
+        label: str = "data",
+    ) -> bool:
+        client = self.clients.get(address.upper()) if address else self.client
+        if not client or not getattr(client, "is_connected", False):
+            print(f"[FAIL] Subscription error for {label}: Not connected")
+            return False
+        try:
+            await client.start_notify(char_uuid, callback)
+            print(f"[OK] Subscribed to {label}")
+            return True
+        except Exception as e:
+            print(f"[FAIL] Subscription error for {label}: {e}")
+            return False
+
+    async def _unsubscribe(self, char_uuid: str, address: Optional[str] = None) -> None:
+        client = self.clients.get(address.upper()) if address else self.client
+        if client:
+            try:
+                await client.stop_notify(char_uuid)
+            except Exception:
+                pass
+
     async def subscribe_to_stress(
         self,
         callback: Callable[[Any, bytes], None],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to stress data notifications"""
-        client = self.clients.get(address.upper()) if address else self.client
-        if not client:
-            print("[FAIL] Subscription error: No client")
-            return False
-
-        if not client.is_connected:
-            print("[FAIL] Subscription error: Not connected")
-            return False
-
-        try:
-            await client.start_notify(self.STRESS_CHARACTERISTIC, callback)
-            print("[OK] Subscribed to stress data")
-            return True
-        except Exception as e:
-            print(f"[FAIL] Subscription error: {e}")
-            return False
+        return await self._subscribe(
+            self.STRESS_CHARACTERISTIC, callback, address, "stress data"
+        )
 
     async def subscribe_to_imu(
         self,
@@ -1198,54 +1054,17 @@ class NuanicConnector:
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to IMU (accelerometer) notifications"""
-        client = self.clients.get(address.upper()) if address else self.client
-        if not client:
-            print("[FAIL] IMU subscription error: No client")
-            return False
+        return await self._subscribe(
+            self.IMU_CHARACTERISTIC, callback, address, "IMU data"
+        )
 
-        if not client.is_connected:
-            print("[FAIL] IMU subscription error: Not connected")
-            return False
-
-        try:
-            await client.start_notify(self.IMU_CHARACTERISTIC, callback)
-            print("[OK] Subscribed to IMU data")
-            return True
-        except Exception as e:
-            print(f"[FAIL] IMU subscription error: {e}")
-            return False
-
-    async def unsubscribe_from_stress(
-        self,
-        address: Optional[str] = None,
-    ) -> None:
+    async def unsubscribe_from_stress(self, address: Optional[str] = None) -> None:
         """Unsubscribe from stress notifications"""
-        if address:
-            client = self.clients.get(address.upper())
-        else:
-            client = self.client
+        await self._unsubscribe(self.STRESS_CHARACTERISTIC, address)
 
-        if client:
-            try:
-                await client.stop_notify(self.STRESS_CHARACTERISTIC)
-            except Exception:
-                pass
-
-    async def unsubscribe_from_imu(
-        self,
-        address: Optional[str] = None,
-    ) -> None:
+    async def unsubscribe_from_imu(self, address: Optional[str] = None) -> None:
         """Unsubscribe from IMU notifications"""
-        if address:
-            client = self.clients.get(address.upper())
-        else:
-            client = self.client
-
-        if client:
-            try:
-                await client.stop_notify(self.IMU_CHARACTERISTIC)
-            except Exception:
-                pass
+        await self._unsubscribe(self.IMU_CHARACTERISTIC, address)
 
     async def subscribe_to_raw_eda(
         self,
@@ -1253,38 +1072,13 @@ class NuanicConnector:
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to raw EDA data notifications"""
-        client = self.clients.get(address.upper()) if address else self.client
-        if not client:
-            print("[FAIL] Subscription error: No client")
-            return False
+        return await self._subscribe(
+            self.RAW_EDA_CHARACTERISTIC, callback, address, "raw EDA data"
+        )
 
-        if not client.is_connected:
-            print("[FAIL] Subscription error: Not connected")
-            return False
-
-        try:
-            await client.start_notify(self.RAW_EDA_CHARACTERISTIC, callback)
-            print("[OK] Subscribed to raw EDA data")
-            return True
-        except Exception as e:
-            print(f"[FAIL] Subscription error: {e}")
-            return False
-
-    async def unsubscribe_from_raw_eda(
-        self,
-        address: Optional[str] = None,
-    ) -> None:
+    async def unsubscribe_from_raw_eda(self, address: Optional[str] = None) -> None:
         """Unsubscribe from raw EDA notifications"""
-        if address:
-            client = self.clients.get(address.upper())
-        else:
-            client = self.client
-
-        if client:
-            try:
-                await client.stop_notify(self.RAW_EDA_CHARACTERISTIC)
-            except Exception:
-                pass
+        await self._unsubscribe(self.RAW_EDA_CHARACTERISTIC, address)
 
     async def subscribe_to_live_eda(
         self,
@@ -1292,38 +1086,16 @@ class NuanicConnector:
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to LIVE_EDA UUID notifications (42dcb71b...)."""
-        client = self.clients.get(address.upper()) if address else self.client
-        if not client:
-            print("[FAIL] LIVE_EDA subscription error: No client")
-            return False
+        return await self._subscribe(
+            self.MYSTERY_NOTIFY_CHARACTERISTIC,
+            callback,
+            address,
+            "LIVE_EDA notifications",
+        )
 
-        if not client.is_connected:
-            print("[FAIL] LIVE_EDA subscription error: Not connected")
-            return False
-
-        try:
-            await client.start_notify(self.MYSTERY_NOTIFY_CHARACTERISTIC, callback)
-            print("[OK] Subscribed to LIVE_EDA notifications")
-            return True
-        except Exception as e:
-            print(f"[FAIL] LIVE_EDA subscription error: {e}")
-            return False
-
-    async def unsubscribe_from_live_eda(
-        self,
-        address: Optional[str] = None,
-    ) -> None:
+    async def unsubscribe_from_live_eda(self, address: Optional[str] = None) -> None:
         """Unsubscribe from LIVE_EDA UUID notifications."""
-        if address:
-            client = self.clients.get(address.upper())
-        else:
-            client = self.client
-
-        if client:
-            try:
-                await client.stop_notify(self.MYSTERY_NOTIFY_CHARACTERISTIC)
-            except Exception:
-                pass
+        await self._unsubscribe(self.MYSTERY_NOTIFY_CHARACTERISTIC, address)
 
     async def discover_services(self):
         """Discover and print all services and characteristics."""
