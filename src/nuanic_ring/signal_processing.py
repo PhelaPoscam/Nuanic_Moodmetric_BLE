@@ -1,9 +1,9 @@
 """Signal conditioning for raw physiological streams."""
 
 import math
+import statistics
 from collections import deque
 
-import statistics
 from scipy import signal
 
 
