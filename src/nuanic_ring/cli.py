@@ -302,7 +302,11 @@ def ring_monitor() -> int:
     """Entry point for nuanic-ring-monitor command."""
     parser = build_parser()
     args = parser.parse_args()
-    return asyncio.run(_run_monitor_cli(args))
+    try:
+        return asyncio.run(_run_monitor_cli(args))
+    except KeyboardInterrupt:
+        print("\n[INFO] Interrupted by user. Exiting...")
+        return 0
 
 
 async def _run_monitor_cli(args: argparse.Namespace) -> int:
