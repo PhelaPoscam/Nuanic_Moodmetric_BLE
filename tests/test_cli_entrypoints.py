@@ -1,8 +1,24 @@
-from nuanic_ring.cli_entrypoints import _script_path
+"""Verify that CLI entrypoints resolve to callable functions.
+
+The entrypoints are wired in ``pyproject.toml`` ``[project.scripts]`` and must
+be importable + callable regardless of whether the package is installed from a
+wheel or in editable mode.
+"""
+
+from nuanic_ring import cli_entrypoints
 
 
-def test_entrypoint_script_paths_exist_in_repo_checkout():
-    assert _script_path("ring_monitor_cli.py").exists()
-    assert _script_path("ring_analyzer_cli.py").exists()
-    assert _script_path("ring_post_analysis_cli.py").exists()
-    assert _script_path("discover_ring_services.py").exists()
+def test_ring_monitor_entrypoint_is_callable():
+    assert callable(cli_entrypoints.ring_monitor)
+
+
+def test_ring_analyzer_entrypoint_is_callable():
+    assert callable(cli_entrypoints.ring_analyzer)
+
+
+def test_ring_post_analysis_entrypoint_is_callable():
+    assert callable(cli_entrypoints.ring_post_analysis)
+
+
+def test_ring_discover_services_entrypoint_is_callable():
+    assert callable(cli_entrypoints.ring_discover_services)

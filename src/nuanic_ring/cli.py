@@ -496,17 +496,3 @@ def ring_post_analysis() -> int:
     results = analyze_latest_ring_logs(log_dir=args.log_dir, latest_n=args.latest)
     print(format_analysis_report(results))
     return 0
-
-
-def ring_discover() -> int:
-    """Entry point for nuanic-ring-discover command."""
-    from scripts import discover_ring_services
-
-    try:
-        sys.argv[0] = "nuanic-ring-discover"
-        return discover_ring_services.main()
-    except SystemExit as e:
-        return e.code if isinstance(e.code, int) else 0
-    except Exception as e:
-        print(f"[ERROR] Discovery CLI failed: {e}")
-        return 1

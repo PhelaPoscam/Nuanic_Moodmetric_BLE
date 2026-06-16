@@ -3,6 +3,7 @@
 import asyncio
 import csv
 import json
+import logging
 import math
 import platform
 import struct
@@ -15,6 +16,8 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 from .connector import NuanicConnector
 from .mm_compat import MMFeatures, MMLikeScorer
 from .signal_processing import SignalConditioner
+
+_log = logging.getLogger(__name__)
 
 
 def convert_eda(raw_value: int) -> Tuple[float, float]:
@@ -382,14 +385,17 @@ class NuanicMonitor:
             if not batch:
                 continue
 
-            with open(
-                log_file,
-                "a",
-                newline="",
-                encoding="utf-8",
-            ) as file:
-                writer = csv.writer(file)
-                writer.writerows(batch)
+            try:
+                with open(
+                    log_file,
+                    "a",
+                    newline="",
+                    encoding="utf-8",
+                ) as file:
+                    writer = csv.writer(file)
+                    writer.writerows(batch)
+            except Exception:
+                _log.debug("CSV write error for %s", log_file, exc_info=True)
             batch.clear()
 
     def _enqueue_log(self, state: RingDeviceState, row: List[Any]) -> None:
@@ -726,7 +732,7 @@ class NuanicMonitor:
                 # Toggle the heartbeat for visual feedback
                 state.heartbeat_tick = not state.heartbeat_tick
             except Exception:
-                pass
+                _log.debug("Stress callback error for %s", mac, exc_info=True)
 
         return _cb
 
@@ -830,7 +836,7 @@ class NuanicMonitor:
                 self._enqueue_stream_log(state, stream_row)
                 self._enqueue_computed_log(state, computed_row)
             except Exception:
-                pass
+                _log.debug("IMU callback error for %s", mac, exc_info=True)
 
         return _cb
 
@@ -894,7 +900,7 @@ class NuanicMonitor:
                 ]
                 self._enqueue_stream_log(state, stream_row)
             except Exception:
-                pass
+                _log.debug("Raw EDA callback error for %s", mac, exc_info=True)
 
         return _cb
 
@@ -957,7 +963,7 @@ class NuanicMonitor:
                 ]
                 self._enqueue_stream_log(state, stream_row)
             except Exception:
-                pass
+                _log.debug("Live EDA callback error for %s", mac, exc_info=True)
 
         return _cb
 
@@ -1229,7 +1235,7 @@ class NuanicMonitor:
                     await self.connector.disconnect(address=mac)
                     await self._connect_and_subscribe(mac)
             except Exception:
-                pass
+                _log.debug("Health-loop error for %s", mac, exc_info=True)
 
             await asyncio.sleep(1.0)
 

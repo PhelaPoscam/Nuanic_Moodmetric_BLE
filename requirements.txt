@@ -1,11 +1,6 @@
-bleak>=0.22.3
-numpy>=1.26.4
-matplotlib>=3.8.4
-scipy>=1.11.4
-pandas>=2.2.2
-rich>=13.7.1
-pytest>=7.0
-pytest-asyncio>=0.20
-pytest-cov>=4.1
-black>=23.0
-isort>=5.13.2
+# This project uses pyproject.toml as the authoritative dependency source.
+# Install in editable mode with dev dependencies:
+#   pip install -e ".[dev]"
+#
+# For production use:
+#   pip install .

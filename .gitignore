@@ -73,6 +73,9 @@ venv.bak/
 data/ring_logs/
 data/diagnostic_test/
 
+# Pre-refactor source backup (transitional artifact, kept out of working tree)
+backup_nuanic/
+
 # Project-specific: temp/dev scripts and dump files
 temp_patch.py
 tests_output.txt
