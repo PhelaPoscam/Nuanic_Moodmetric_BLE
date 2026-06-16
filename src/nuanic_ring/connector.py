@@ -12,7 +12,7 @@ from bleak import BleakClient, BleakScanner
 
 # Persists the last-used ring MAC so we can reconnect even when a stale
 # OS-level connection prevents the ring from advertising.
-_ADDR_CACHE_FILE = Path(__file__).parents[3] / "data" / ".last_ring_addr"
+_ADDR_CACHE_FILE = Path.home() / ".nuanic_ring" / ".last_ring_addr"
 
 
 class NuanicConnector:
@@ -847,6 +847,12 @@ class NuanicConnector:
                 self.target_address = address
                 self._save_last_address(address)
                 return True
+            except asyncio.CancelledError:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                raise
             except Exception as e:
                 print(
                     f"[CONN-FAIL] {address} attempt {attempt}/{self.max_connect_attempts}: {type(e).__name__}: {e}"
