@@ -279,12 +279,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup-delay", type=float, default=3.0)
     parser.add_argument("--reset-bt", action="store_true")
     parser.add_argument("--post-analysis", choices=["yes", "no"], default="no")
-    parser.add_argument(
-        "--posanalysys",
-        dest="post_analysis",
-        choices=["yes", "no"],
-        help=argparse.SUPPRESS,
-    )
     parser.add_argument("--list-rings", action="store_true")
     parser.add_argument("--discover", action="store_true")
     parser.add_argument("--scan-timeout", type=float, default=6.0)

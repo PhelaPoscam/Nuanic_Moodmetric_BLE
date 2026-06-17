@@ -1,6 +1,0 @@
-# This project uses pyproject.toml as the authoritative dependency source.
-# Install in editable mode with dev dependencies:
-#   pip install -e ".[dev]"
-#
-# For production use:
-#   pip install .

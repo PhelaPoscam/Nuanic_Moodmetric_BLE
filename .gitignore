@@ -84,4 +84,6 @@ diagnostic_capture_test.py
 
 # Tooling-specific ignored paths
 .commandcode/
+.agents/
+.claude/
 

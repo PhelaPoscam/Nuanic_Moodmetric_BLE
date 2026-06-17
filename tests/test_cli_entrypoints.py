@@ -5,20 +5,20 @@ be importable + callable regardless of whether the package is installed from a
 wheel or in editable mode.
 """
 
-from nuanic_ring import cli_entrypoints
+from nuanic_ring import cli, discover_services
 
 
 def test_ring_monitor_entrypoint_is_callable():
-    assert callable(cli_entrypoints.ring_monitor)
+    assert callable(cli.ring_monitor)
 
 
 def test_ring_analyzer_entrypoint_is_callable():
-    assert callable(cli_entrypoints.ring_analyzer)
+    assert callable(cli.ring_analyzer)
 
 
 def test_ring_post_analysis_entrypoint_is_callable():
-    assert callable(cli_entrypoints.ring_post_analysis)
+    assert callable(cli.ring_post_analysis)
 
 
 def test_ring_discover_services_entrypoint_is_callable():
-    assert callable(cli_entrypoints.ring_discover_services)
+    assert callable(discover_services.main)

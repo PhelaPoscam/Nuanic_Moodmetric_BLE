@@ -20,14 +20,10 @@ class NuanicConnector:
 
     # GATT UUIDs (Verified best-fit interpretations as of 2026-06)
     STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # Off-finger / on-finger state indicator stream
-    STORAGE_UUID = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"  # Historical storage / buffer characteristic
     LIVE_EDA_UUID = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"  # Live notify stream (currently no reliable payload)
     LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # High-rate physiological stream (raw EDA + Stress Index) at ~16Hz
     PHYSIOLOGY_UUID = LIVE_DNA_UUID
     IMU_BATCH_UUID = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # Bulk motion / IMU batch stream (14-sample batches at ~1Hz)
-    SET_TIME_UUID = (
-        "dc9c31a7-fbd3-467a-8777-10900c423d3b"  # Writable config / timestamp register
-    )
     SAMPLE_RATE_UUID = (
         "516b0fb6-d861-4619-9dd0-0105e8b85128"  # Writable config register (proven)
     )
@@ -41,8 +37,7 @@ class NuanicConnector:
     # Core aliases used across the existing telemetry code.
     BATTERY_CHARACTERISTIC = BATTERY_UUID
     IMU_CHARACTERISTIC = IMU_BATCH_UUID
-    STATE_CHARACTERISTIC = STATE_UUID
-    RAW_EDA_CHARACTERISTIC = STATE_CHARACTERISTIC
+    RAW_EDA_CHARACTERISTIC = STATE_UUID
     MYSTERY_NOTIFY_CHARACTERISTIC = LIVE_EDA_UUID
     STRESS_CHARACTERISTIC = PHYSIOLOGY_UUID
 
@@ -74,11 +69,6 @@ class NuanicConnector:
         self.devices: Dict[str, Any] = {}
         self._disconnect_events: Dict[str, asyncio.Event] = {}
         self._disconnect_events_lock = asyncio.Lock()
-
-    def _on_disconnect(self, _client):
-        """Bleak disconnect callback to confirm OS-level link release."""
-        self._disconnect_event.set()
-        print("[DISC] BLE disconnect callback fired")
 
     def _on_disconnect_for(self, address: str):
         """Factory for per-device disconnected callbacks."""
@@ -155,30 +145,6 @@ class NuanicConnector:
             print(f"[BT-RESET] Could not reset radio: {e}")
             return False
 
-    async def _winrt_force_close(self, address: str) -> None:
-        """Dispose the WinRT BluetoothLEDevice handle (Windows only).
-
-        After BleakClient.disconnect() the WinRT device object can still
-        hold the OS-level ACL link open, which leaves the ring in a
-        'connected' state.  Closing the handle tells the OS (and the ring)
-        the connection is gone so the ring resumes advertising.
-        """
-        if platform.system() != "Windows":
-            return
-        try:
-            import winrt.windows.devices.bluetooth as bt_winrt  # type: ignore
-
-            addr_int = int(address.replace(":", ""), 16)
-            device = await bt_winrt.BluetoothLEDevice.from_bluetooth_address_async(
-                addr_int
-            )
-            if device:
-                device.close()
-                print("[CLEANUP] WinRT device handle closed.")
-                await asyncio.sleep(0.3)
-        except Exception:
-            pass
-
     def _create_bleak_client(self, target, disconnected_callback=None):
         """Create BleakClient with robust Windows-friendly arguments.
 
@@ -187,7 +153,7 @@ class NuanicConnector:
         """
         kwargs = {
             "timeout": self.timeout,
-            "disconnected_callback": disconnected_callback or self._on_disconnect,
+            "disconnected_callback": disconnected_callback,
         }
 
         # Windows-specific tweaks to help avoid zombie connections and cache issues
@@ -548,115 +514,6 @@ class NuanicConnector:
                     print(f"Invalid choice. Enter 1-{len(rings)}")
             except ValueError:
                 print(f"Invalid input. Enter 1-{len(rings)} or 'q'")
-
-    async def check_mac_address_dynamic(
-        self, num_scans: int = 5, delay_between_scans: float = 1.0
-    ) -> dict:
-        """Check if the ring has a dynamic or static MAC address.
-
-        Performs multiple scans and compares MAC addresses to determine if the device
-        uses a dynamic (changing) or static (constant) MAC address.
-
-        Args:
-            num_scans: Number of scans to perform (default: 5)
-            delay_between_scans: Delay in seconds between scans (default: 1.0)
-
-        Returns:
-            dict with keys:
-                - 'is_dynamic': bool, True if MAC address is dynamic, False if static
-                - 'addresses': list of discovered MAC addresses
-                - 'unique_addresses': set of unique MAC addresses
-                - 'scans_performed': number of scans performed
-                - 'num_unique': number of unique addresses found
-                - 'confidence': str, 'high' if clear pattern, 'low' if inconclusive
-        """
-        print(
-            f"\n[CHECK] Scanning for MAC address changes ({num_scans} scans, {delay_between_scans}s delay)...\n"
-        )
-
-        discovered_addresses = []
-
-        try:
-            for scan_num in range(1, num_scans + 1):
-                print(f"[SCAN {scan_num}/{num_scans}]", end=" ", flush=True)
-
-                try:
-                    devices = await BleakScanner.discover(timeout=3.0)
-
-                    # Find Nuanic / Moodmetric devices
-                    nuanic_found = False
-                    for device in devices:
-                        if device.name and (
-                            "Nuanic" in device.name or "Moodmetric" in device.name
-                        ):
-                            # If target address specified, only record that one
-                            if self.target_address:
-                                if (
-                                    device.address.lower()
-                                    == self.target_address.lower()
-                                ):
-                                    discovered_addresses.append(device.address)
-                                    print(f"Found: {device.address} ({device.name})")
-                                    nuanic_found = True
-                                    break
-                            else:
-                                # Record first available Nuanic device
-                                discovered_addresses.append(device.address)
-                                print(f"Found: {device.address} ({device.name})")
-                                nuanic_found = True
-                                break
-
-                    if not nuanic_found:
-                        print("Not found in this scan")
-
-                except Exception as e:
-                    print(f"Scan error: {e}")
-
-                # Wait before next scan
-                if scan_num < num_scans:
-                    await asyncio.sleep(delay_between_scans)
-
-            # Analyze results
-            unique_addresses = list(set(discovered_addresses))
-            is_dynamic = len(unique_addresses) > 1
-
-            # Confidence assessment
-            if not discovered_addresses:
-                confidence = "low"  # No device found
-            elif len(unique_addresses) == 1:
-                confidence = "high"  # All scans found same address
-            else:
-                confidence = (
-                    "high" if len(discovered_addresses) >= num_scans - 1 else "low"
-                )  # Require mostly successful scans for high confidence
-
-            print(f"\n[RESULT]")
-            print(f"  Unique addresses found: {len(unique_addresses)}")
-            print(f"  Addresses: {unique_addresses}")
-            print(f"  MAC is {'DYNAMIC' if is_dynamic else 'STATIC'}")
-            print(f"  Confidence: {confidence}\n")
-
-            return {
-                "is_dynamic": is_dynamic,
-                "addresses": discovered_addresses,
-                "unique_addresses": unique_addresses,
-                "scans_performed": num_scans,
-                "num_unique": len(unique_addresses),
-                "confidence": confidence,
-            }
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            print(f"\n[ERROR] Check failed: {e}")
-            return {
-                "is_dynamic": None,
-                "addresses": discovered_addresses,
-                "unique_addresses": list(set(discovered_addresses)),
-                "scans_performed": len(discovered_addresses),
-                "num_unique": len(set(discovered_addresses)),
-                "confidence": "low",
-            }
 
     async def _cleanup_client(self, address: Optional[str] = None):
         """Strict cleanup of existing BLE client state to prevent zombie connections."""
