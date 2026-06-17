@@ -14,18 +14,10 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from .connector import NuanicConnector
-from .mm_compat import MMFeatures, MMLikeScorer
+from .mm_compat import MMFeatures, MMLikeScorer, convert_eda
 from .signal_processing import SignalConditioner
 
 _log = logging.getLogger(__name__)
-
-
-def convert_eda(raw_value: int) -> Tuple[float, float]:
-    """Convert raw EDA integer into resistance (kOhm) and conductance (uS)."""
-    adc_multiplier = 1.0
-    resistance_kohm = (raw_value * adc_multiplier) / 1000.0
-    conductance_us = (1000.0 / resistance_kohm) if resistance_kohm > 0 else 0.0
-    return round(resistance_kohm, 4), round(conductance_us, 4)
 
 
 @dataclass
@@ -1307,39 +1299,3 @@ class NuanicMonitor:
                 }
             )
         return rows
-
-    # Backward-compatible wrappers
-    async def start_monitoring(self) -> bool:
-        return await self.start_multi(monitor_all=False)
-
-    async def stop_monitoring(self) -> None:
-        await self.stop_multi()
-
-    def get_current_stress(self) -> Optional[int]:
-        if not self.device_states:
-            return None
-        first = next(iter(self.device_states.values()))
-        return first.dne_stress_index
-
-    def get_current_eda(self) -> Optional[int]:
-        if not self.device_states:
-            return None
-        first = next(iter(self.device_states.values()))
-        return first.raw_eda
-
-    async def run(self, duration_seconds: Optional[float] = None) -> bool:
-        ok = await self.start_multi(monitor_all=False)
-        if not ok:
-            return False
-
-        try:
-            if duration_seconds is None:
-                while True:
-                    await asyncio.sleep(1)
-            else:
-                await asyncio.sleep(duration_seconds)
-            return True
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            return True
-        finally:
-            await self.stop_multi()

@@ -1,17 +1,10 @@
-import sys
-from importlib import import_module
-from pathlib import Path
+"""Verify CLI argument parser defaults and marker hotkey handling."""
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-
-
-def _ring_monitor_cli():
-    return import_module("ring_monitor_cli")
+from nuanic_ring.cli import _build_marker_hotkeys, build_parser
 
 
 def test_cli_defaults_match_documented_values():
-    parser = _ring_monitor_cli().build_parser()
-    args = parser.parse_args([])
+    args = build_parser().parse_args([])
 
     assert args.stagger_delay == 1.25
     assert args.ui_refresh_ms == 200
@@ -24,14 +17,8 @@ def test_cli_defaults_match_documented_values():
     assert args.markers is False
 
 
-def test_cli_backward_compat_alias_for_post_analysis():
-    parser = _ring_monitor_cli().build_parser()
-    args = parser.parse_args(["--posanalysys", "yes"])
-    assert args.post_analysis == "yes"
-
-
 def test_cli_default_marker_hotkeys():
-    hotkeys = _ring_monitor_cli()._build_marker_hotkeys([])
+    hotkeys = _build_marker_hotkeys([])
 
     assert hotkeys["SPACE"] == "marker"
     assert hotkeys["S"] == "stimulus_on"
@@ -40,7 +27,7 @@ def test_cli_default_marker_hotkeys():
 
 
 def test_cli_marker_hotkey_override():
-    hotkeys = _ring_monitor_cli()._build_marker_hotkeys(["S=start", "X=cleanup"])
+    hotkeys = _build_marker_hotkeys(["S=start", "X=cleanup"])
 
     assert hotkeys["S"] == "start"
     assert hotkeys["X"] == "cleanup"

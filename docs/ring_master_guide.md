@@ -33,9 +33,6 @@ pip install -e ".[dev]"
 ```bash
 # Installed command
 nuanic-ring-monitor --calibration-seconds 60
-
-# Script path equivalent
-python scripts/ring_monitor_cli.py --calibration-seconds 60
 ```
 
 ### Multi-ring
@@ -124,7 +121,7 @@ nuanic-ring-discover --subscribe-core-streams --ring-profile auto
 
 ---
 
-## 🛠️ CLI Argument Reference (`ring_monitor_cli.py`)
+## 🛠️ CLI Argument Reference (`nuanic-ring-monitor`)
 
 | Argument | Description | Default |
 | :--- | :--- | :--- |

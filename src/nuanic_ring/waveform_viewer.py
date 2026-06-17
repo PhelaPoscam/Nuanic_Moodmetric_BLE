@@ -23,16 +23,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .connector import NuanicConnector
-from .mm_compat import MMFeatures, MMLikeScorer
+from .mm_compat import MMFeatures, MMLikeScorer, convert_eda
 from .signal_processing import SignalConditioner
-
-
-def convert_eda(raw_value: int):
-    """Convert raw EDA integer into resistance (kOhm) and conductance (uS)."""
-    ADC_MULTIPLIER = 1.0
-    resistance_kohm = (raw_value * ADC_MULTIPLIER) / 1000.0
-    conductance_us = (1000.0 / resistance_kohm) if resistance_kohm > 0 else 0.0
-    return resistance_kohm, conductance_us
 
 
 def smooth_data(data: list, window: int) -> list:
@@ -222,34 +214,6 @@ class NuanicWaveformViewer:
         await self.connector.unsubscribe_from_imu()
         await self.connector.unsubscribe_from_live_eda()
         await self.connector.disconnect()
-
-
-def _epoch_candidate_text(raw_value: int, current_utc: datetime) -> str:
-    """Heuristic check whether raw_value could be unix sec/ms/us timestamp."""
-    candidates: list[str] = []
-    specs = [
-        ("sec", 1.0),
-        ("ms", 1_000.0),
-        ("us", 1_000_000.0),
-    ]
-
-    for label, divisor in specs:
-        try:
-            dt = datetime.fromtimestamp(raw_value / divisor, tz=timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            continue
-
-        delta_seconds = abs((current_utc - dt).total_seconds())
-        # "plausible-now" means within 24h of host UTC time.
-        plausible_now = delta_seconds <= 86400
-        if plausible_now:
-            candidates.append(f"{label}=YES ({dt.isoformat()})")
-        else:
-            candidates.append(f"{label}=no ({dt.date().isoformat()})")
-
-    if not candidates:
-        return "sec/ms/us: out-of-range"
-    return " | ".join(candidates)
 
 
 def _autoscale_axis(

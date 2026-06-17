@@ -27,6 +27,13 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def convert_eda(raw_value: int):
+    """Convert raw EDA integer into resistance (kOhm) and conductance (uS)."""
+    resistance_kohm = raw_value / 1000.0
+    conductance_us = (1000.0 / resistance_kohm) if resistance_kohm > 0 else 0.0
+    return resistance_kohm, conductance_us
+
+
 def decode_streaming_packet(packet: bytes) -> dict | None:
     """Decode 7-byte streaming packet.
 
