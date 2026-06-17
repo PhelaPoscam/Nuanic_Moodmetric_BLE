@@ -1,4 +1,9 @@
-"""BLE connection and device management for Nuanic ring(s)."""
+"""BLE connection and device management for Nuanic ring(s).
+
+ponytail: ~1,000 lines — scanning, discovery, reconnect, BT radio reset,
+address cache all in one class. Split into _scanner.py / _connection.py
+when this becomes painful to navigate.
+"""
 
 import asyncio
 import inspect

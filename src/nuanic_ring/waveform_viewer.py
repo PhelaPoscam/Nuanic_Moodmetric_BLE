@@ -1,6 +1,11 @@
 """Standalone live viewer for Juho-like Nuanic streams.
 
 Plots (UUID-anchored, candidate semantics):
+
+ponytail: matplotlib updates use threading instead of asyncio. Works but
+mixing threading + asyncio breaks at 3am. Switch to a matplotlib async
+backend (e.g. Qt) or use FigureCanvasAgg + manual blit in an asyncio loop
+when this causes its first heisenbug.
 - 42dcb71b LIVE_EDA signal metric (HQI ohm or fallback int16 mean-abs)
 - 42dcb71b LIVE_EDA ohm (when HQI 14-byte packets are available)
 - d306262b LIVE_DNA word0..word3 (uint32 little-endian)
@@ -82,10 +87,12 @@ class NuanicWaveformViewer:
         calibration_seconds: int = 60,
         target_hz: float | None = None,
         attempt_rate_control: bool = False,
+        raw_signal: bool = False,
     ):
         self.connector = NuanicConnector(target_address=ring_addr)
         self.state = WaveformState()
         self.signal_conditioner = SignalConditioner()
+        self.raw_signal = raw_signal
         self.scorer = MMLikeScorer(calibration_seconds=calibration_seconds)
         self.target_hz = target_hz
         self.attempt_rate_control = attempt_rate_control
@@ -141,7 +148,11 @@ class NuanicWaveformViewer:
             self.state.live_dna_word3.append(float(word3))
 
             # Process through Physiological Pipeline
-            filtered_us = self.signal_conditioner.process(conductance_us)
+            filtered_us = (
+                conductance_us
+                if self.raw_signal
+                else self.signal_conditioner.process(conductance_us)
+            )
             freq, amp = self.scorer.update_scr_features(tonic_value=filtered_us)
             features = MMFeatures(
                 scr_frequency_per_min=freq,
@@ -391,6 +402,7 @@ async def run_waveform_viewer(
     calibration_seconds: int = 60,
     target_hz: float | None = None,
     attempt_rate_control: bool = False,
+    raw_signal: bool = False,
 ) -> int:
     """Run standalone live telemetry plotter."""
     viewer = NuanicWaveformViewer(
@@ -398,6 +410,7 @@ async def run_waveform_viewer(
         calibration_seconds=calibration_seconds,
         target_hz=target_hz,
         attempt_rate_control=attempt_rate_control,
+        raw_signal=raw_signal,
     )
 
     if not await viewer.connect_and_subscribe():

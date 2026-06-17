@@ -278,6 +278,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--use-warmup", action="store_true")
     parser.add_argument("--warmup-delay", type=float, default=3.0)
     parser.add_argument("--reset-bt", action="store_true")
+    parser.add_argument(
+        "--raw", action="store_true", help="Bypass signal conditioner, stream raw EDA"
+    )
     parser.add_argument("--post-analysis", choices=["yes", "no"], default="no")
     parser.add_argument("--list-rings", action="store_true")
     parser.add_argument("--discover", action="store_true")
@@ -359,6 +362,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
             smooth_window=args.smooth,
             target_hz=args.target_hz,
             attempt_rate_control=(args.rate_control == "yes"),
+            raw_signal=args.raw,
         )
 
     monitor = NuanicMonitor(
@@ -376,6 +380,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         warmup_delay=args.warmup_delay,
         allow_reset_bt=args.reset_bt,
         participant_id=args.participant_id,
+        raw_signal=args.raw,
     )
 
     started = await monitor.start_multi(
