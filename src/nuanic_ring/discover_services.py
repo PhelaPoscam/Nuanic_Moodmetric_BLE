@@ -2,6 +2,10 @@
 """Unified ring diagnostics CLI.
 
 This script consolidates exploratory reverse-engineering tools into one entrypoint:
+
+ponytail: 641 lines, duplicates BLE connection lifecycle and arg parsing
+from connector.py / cli.py. Fold into cli.py or share the connector when
+the duplication causes a real bug.
 - Service/characteristic discovery
 - Notify packet profiling (size and rate)
 - Optional write-probe on config characteristics

@@ -109,6 +109,7 @@ class NuanicMonitor:
         warmup_delay: float = 3.0,
         allow_reset_bt: bool = False,
         participant_id: Optional[str] = None,
+        raw_signal: bool = False,
     ):
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
@@ -130,6 +131,7 @@ class NuanicMonitor:
         self.use_warmup = use_warmup
         self.warmup_delay = warmup_delay
         self.allow_reset_bt = allow_reset_bt
+        self.raw_signal = raw_signal
 
         self.start_time: Optional[datetime] = None
         self.running = False
@@ -627,7 +629,11 @@ class NuanicMonitor:
                 dne_stress_index = parsed["dne_stress_index"]
 
                 resistance_kohm, conductance_us = convert_eda(eda_value)
-                filtered_us = state.signal_conditioner.process(conductance_us)
+                filtered_us = (
+                    conductance_us
+                    if self.raw_signal
+                    else state.signal_conditioner.process(conductance_us)
+                )
                 freq, amp = state.scorer.update_scr_features(tonic_value=filtered_us)
                 score_state = state.scorer.update(
                     MMFeatures(

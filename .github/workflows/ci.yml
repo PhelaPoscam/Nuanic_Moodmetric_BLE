@@ -1,5 +1,9 @@
 name: CI
 
+# ponytail: no type checker (mypy/pyright) in CI. Binary BLE packet
+# decoders with struct.unpack would benefit — add when an offset bug
+# slips through.
+
 on:
   push:
     branches: [ "main", "master" ]
