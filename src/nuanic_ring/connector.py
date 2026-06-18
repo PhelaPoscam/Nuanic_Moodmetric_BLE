@@ -579,7 +579,9 @@ class NuanicConnector:
     async def _subscribe(
         self,
         char_uuid: str,
-        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
+        callback: Callable[
+            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
+        ],
         address: Optional[str] = None,
         label: str = "data",
     ) -> bool:
@@ -605,7 +607,9 @@ class NuanicConnector:
 
     async def subscribe_to_stress(
         self,
-        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
+        callback: Callable[
+            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
+        ],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to stress data notifications"""
@@ -615,7 +619,9 @@ class NuanicConnector:
 
     async def subscribe_to_imu(
         self,
-        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
+        callback: Callable[
+            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
+        ],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to IMU (accelerometer) notifications"""
@@ -633,7 +639,9 @@ class NuanicConnector:
 
     async def subscribe_to_raw_eda(
         self,
-        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
+        callback: Callable[
+            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
+        ],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to raw EDA data notifications"""
@@ -647,7 +655,9 @@ class NuanicConnector:
 
     async def subscribe_to_live_eda(
         self,
-        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
+        callback: Callable[
+            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
+        ],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to LIVE_EDA UUID notifications (42dcb71b...)."""
