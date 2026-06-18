@@ -136,7 +136,7 @@ class MMLikeScorer:
         self.latest_raw_score: float | None = None
         self.latest_scaled_score: float | None = None
 
-        self._event_times = deque()
+        self._event_times: deque[datetime] = deque()
         self._last_event_time: datetime | None = None
         self._baseline_ema: float | None = None
 

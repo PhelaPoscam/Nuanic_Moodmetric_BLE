@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
-"""Unified ring diagnostics CLI.
+"""Ring diagnostics — service discovery, notify profiling, write probes, buffer inspection.
 
-This script consolidates exploratory reverse-engineering tools into one entrypoint:
-
-ponytail: 641 lines, duplicates BLE connection lifecycle and arg parsing
-from connector.py / cli.py. Fold into cli.py or share the connector when
-the duplication causes a real bug.
-- Service/characteristic discovery
-- Notify packet profiling (size and rate)
-- Optional write-probe on config characteristics
-- Optional buffer inspection
+Used both as ``nuanic-ring-discover`` entry point and by ``cli.py --discover``.
+The diagnostic body lives in :func:`run_diagnostics` so both consumers share
+one implementation.
 """
 
 import argparse
@@ -544,17 +538,83 @@ async def subscribe_core_streams(
                 print(f"  - {uuid}")
 
 
+async def run_diagnostics(
+    client,
+    *,
+    subscribe_streams: bool = False,
+    listen_seconds: int | None = None,
+    ring_profile: str = "auto",
+    buffer_only: bool = False,
+    buffer_poll: int = 1,
+    buffer_interval: float = 2.0,
+    only_stream_chars: bool = False,
+    no_profile: bool = False,
+    profile_seconds: int = 15,
+    write_probe: bool = False,
+) -> int:
+    """Run the full diagnostic suite against a connected BLE client.
+
+    Callers that don't need every knob can rely on the defaults (no probe,
+    no write, 1 buffer poll, 15 s profile).
+    """
+    if subscribe_streams:
+        await subscribe_core_streams(
+            client,
+            listen_seconds=listen_seconds,
+            ring_profile=ring_profile,
+        )
+        return 0
+
+    if buffer_only:
+        available_uuids = {
+            char.uuid.lower() for _service, char in iter_all_chars(client)
+        }
+        if BUFFER_CHAR.lower() not in available_uuids:
+            print(
+                "[SKIP] Buffer inspection skipped: target buffer characteristic "
+                f"{BUFFER_CHAR} is not exposed by this device profile."
+            )
+            return 0
+        await inspect_buffer(client, polls=buffer_poll, interval=buffer_interval)
+        return 0
+
+    discovered = await discover_chars(client, only_stream_chars=only_stream_chars)
+    all_chars = discovered["all_chars"]
+    target_chars = discovered["target_chars"]
+
+    await read_non_notify(client, all_chars)
+
+    if not no_profile:
+        await profile_notify(client, all_chars, seconds=profile_seconds)
+
+    if write_probe:
+        if target_chars:
+            await run_write_probe(client)
+        else:
+            print(
+                f"[SKIP] Write probe skipped because target service {SERVICE_UUID} is missing"
+            )
+
+    if buffer_poll > 0:
+        if target_chars:
+            await inspect_buffer(client, polls=buffer_poll, interval=buffer_interval)
+        else:
+            print(
+                f"[SKIP] Buffer inspection skipped because target service {SERVICE_UUID} is missing"
+            )
+
+    return 0
+
+
 async def main() -> int:
     args = parse_args()
     ring_addr = pick_ring_addr(args)
 
     unpair_on_exit_flag = False
     if platform.system() == "Windows":
-        # On Windows, we unpair by default. The --keep-paired-on-exit flag disables this.
         if not args.keep_paired_on_exit:
             unpair_on_exit_flag = True
     else:
-        # On other OSes, we only unpair if requested.
         if "unpair_on_exit" in args and args.unpair_on_exit:
             unpair_on_exit_flag = True
 
@@ -566,74 +626,28 @@ async def main() -> int:
         pair_on_connect=True,
     )
     try:
-        try:
-            if not await connector.connect():
-                print("[FAIL] Could not connect to ring")
-                return 1
-
-            print(
-                f"\n[INIT] Connected to: {connector.target_address or 'selected ring'}"
-            )
-
-            client = connector.client
-            if args.subscribe_core_streams:
-                await subscribe_core_streams(
-                    client,
-                    listen_seconds=args.listen_seconds,
-                    ring_profile=args.ring_profile,
-                )
-                return 0
-
-            if args.buffer_only:
-                available_uuids = {
-                    char.uuid.lower() for _service, char in iter_all_chars(client)
-                }
-                if BUFFER_CHAR.lower() not in available_uuids:
-                    print(
-                        "[SKIP] Buffer inspection skipped: target buffer characteristic "
-                        f"{BUFFER_CHAR} is not exposed by this device profile."
-                    )
-                    return 0
-                await inspect_buffer(
-                    client, polls=args.buffer_poll, interval=args.buffer_interval
-                )
-                return 0
-
-            discovered = await discover_chars(
-                client, only_stream_chars=args.only_stream_chars
-            )
-            all_chars = discovered["all_chars"]
-            target_chars = discovered["target_chars"]
-
-            await read_non_notify(client, all_chars)
-
-            if not args.no_profile:
-                await profile_notify(client, all_chars, seconds=args.profile_seconds)
-
-            if args.write_probe:
-                if target_chars:
-                    await run_write_probe(client)
-                else:
-                    print(
-                        f"[SKIP] Write probe skipped because target service {SERVICE_UUID} is missing"
-                    )
-
-            if args.buffer_poll > 0:
-                if target_chars:
-                    await inspect_buffer(
-                        client, polls=args.buffer_poll, interval=args.buffer_interval
-                    )
-                else:
-                    print(
-                        f"[SKIP] Buffer inspection skipped because target service {SERVICE_UUID} is missing"
-                    )
-
-            return 0
-        except KeyboardInterrupt:
-            print("\n[STOP] Interrupted by user")
+        if not await connector.connect():
+            print("[FAIL] Could not connect to ring")
             return 1
+
+        print(f"\n[INIT] Connected to: {connector.target_address or 'selected ring'}")
+        return await run_diagnostics(
+            connector.client,
+            subscribe_streams=args.subscribe_core_streams,
+            listen_seconds=args.listen_seconds,
+            ring_profile=args.ring_profile,
+            buffer_only=args.buffer_only,
+            buffer_poll=args.buffer_poll,
+            buffer_interval=args.buffer_interval,
+            only_stream_chars=args.only_stream_chars,
+            no_profile=args.no_profile,
+            profile_seconds=args.profile_seconds,
+            write_probe=args.write_probe,
+        )
+    except KeyboardInterrupt:
+        print("\n[STOP] Interrupted by user")
+        return 1
     finally:
-        # Keep disconnect as the final awaited cleanup action before exit.
         await connector.disconnect()
 
 

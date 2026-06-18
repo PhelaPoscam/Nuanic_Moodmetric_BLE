@@ -1,9 +1,5 @@
 name: CI
 
-# ponytail: no type checker (mypy/pyright) in CI. Binary BLE packet
-# decoders with struct.unpack would benefit — add when an offset bug
-# slips through.
-
 on:
   push:
     branches: [ "main", "master" ]
@@ -36,6 +32,10 @@ jobs:
     - name: Check import sorting with isort
       run: |
         isort --check-only --diff .
+
+    - name: Static type checking with mypy
+      run: |
+        mypy src/nuanic_ring
 
     - name: Run tests with coverage
       run: |

@@ -1,8 +1,7 @@
 """BLE connection and device management for Nuanic ring(s).
 
-ponytail: ~1,000 lines — scanning, discovery, reconnect, BT radio reset,
-address cache all in one class. Split into _scanner.py / _connection.py
-when this becomes painful to navigate.
+Scanning and ring discovery live in ``_scanner.py`` (RingScanner);
+this module keeps only the connection / subscription lifecycle.
 """
 
 import asyncio
@@ -10,14 +9,16 @@ import inspect
 import platform
 import struct
 import subprocess
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from bleak import BleakClient, BleakScanner
+from bleak import BleakClient
 
-# Persists the last-used ring MAC so we can reconnect even when a stale
-# OS-level connection prevents the ring from advertising.
-_ADDR_CACHE_FILE = Path.home() / ".nuanic_ring" / ".last_ring_addr"
+from nuanic_ring._scanner import (
+    RingScanner,
+    _load_last_address,
+    _reset_bluetooth_radio,
+    _save_last_address,
+)
 
 
 class NuanicConnector:
@@ -56,13 +57,9 @@ class NuanicConnector:
         unpair_on_disconnect=False,
         pair_on_connect=True,
     ):
-        self.timeout = timeout
-        self.max_scan_attempts = max_scan_attempts
         self.max_connect_attempts = max_connect_attempts
         self.connect_backoff_seconds = connect_backoff_seconds
-        self.target_address = (
-            target_address  # BLE address to connect to (e.g., "AA:BB:CC:DD:EE:FF")
-        )
+        self.target_address = target_address
         self.unpair_on_disconnect = unpair_on_disconnect
         self.pair_on_connect = pair_on_connect
         self.client = None
@@ -75,167 +72,27 @@ class NuanicConnector:
         self._disconnect_events: Dict[str, asyncio.Event] = {}
         self._disconnect_events_lock = asyncio.Lock()
 
-    def _on_disconnect_for(self, address: str):
-        """Factory for per-device disconnected callbacks."""
-
-        def _cb(_client):
-            event = self._disconnect_events.get(address)
-            if event:
-                event.set()
-            if (
-                self.client
-                and getattr(self.client, "address", "").lower() == address.lower()
-            ):
-                self._disconnect_event.set()
-            print(f"[DISC] BLE disconnect callback fired for {address}")
-
-        return _cb
-
-    # ------------------------------------------------------------------
-    # Address cache - lets us reconnect directly when the ring is bonded
-    # to Windows but not advertising (stale connection scenario).
-    # ------------------------------------------------------------------
-
-    def _save_last_address(self, address: str) -> None:
-        try:
-            _ADDR_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _ADDR_CACHE_FILE.write_text(address.strip())
-        except Exception:
-            pass
-
-    def _load_last_address(self) -> str:
-        try:
-            if _ADDR_CACHE_FILE.exists():
-                return _ADDR_CACHE_FILE.read_text().strip() or ""
-        except Exception:
-            pass
-        return ""
-
-    async def _reset_bluetooth_radio(self) -> bool:
-        """Toggle the Windows Bluetooth radio off/on (Windows only).
-
-        This is the programmatic equivalent of flipping Bluetooth off and on
-        in Windows Settings.  It flushes all stale ACL connections, including
-        rings left "connected" from a previous crashed/killed session.  After
-        the reset the ring resumes advertising and the next scan succeeds.
-        """
-        if platform.system() != "Windows":
-            return False
-        try:
-            import winrt.windows.devices.radios as radios_winrt  # type: ignore
-
-            all_radios = await radios_winrt.Radio.get_radios_async()
-            bt_radio = next(
-                (r for r in all_radios if r.kind == radios_winrt.RadioKind.BLUETOOTH),
-                None,
-            )
-            if not bt_radio:
-                print("[BT-RESET] No Bluetooth radio found.")
-                return False
-
-            if bt_radio.state != radios_winrt.RadioState.OFF:
-                print("[BT-RESET] Turning Bluetooth off...", end=" ", flush=True)
-                await bt_radio.set_state_async(radios_winrt.RadioState.OFF)
-                await asyncio.sleep(1.5)
-            else:
-                print("[BT-RESET] Bluetooth is already off...", end=" ", flush=True)
-
-            if bt_radio.state != radios_winrt.RadioState.ON:
-                print("turning on...", end=" ", flush=True)
-                await bt_radio.set_state_async(radios_winrt.RadioState.ON)
-                await asyncio.sleep(2.5)  # give stack time to re-initialize
-            print("[OK]")
-            return True
-        except Exception as e:
-            print(f"[BT-RESET] Could not reset radio: {e}")
-            return False
-
-    def _create_bleak_client(self, target, disconnected_callback=None):
-        """Create BleakClient with robust Windows-friendly arguments.
-
-        Uses pair=... when available and gracefully falls back for older
-        Bleak versions that do not support that constructor argument.
-        """
-        kwargs = {
-            "timeout": self.timeout,
-            "disconnected_callback": disconnected_callback,
-        }
-
-        # Windows-specific tweaks to help avoid zombie connections and cache issues
-        if platform.system() == "Windows":
-            # Using winrt backend directly avoids some OS caching layers if available
-            kwargs["use_cached_services"] = False
-
-        try:
-            params = inspect.signature(BleakClient).parameters
-            if "pair" in params:
-                kwargs["pair"] = self.pair_on_connect
-        except Exception:
-            # Signature probing can fail on some backends; keep safe defaults.
-            pass
-
-        return BleakClient(target, **kwargs)
-
-    async def find_device(self):
-        """Scan for Nuanic ring.
-        If target_address is set, search for that specific device.
-        Retries automatically as part of discovery process.
-        """
-        search_label = (
-            f"'{self.target_address}'" if self.target_address else "(any Nuanic)"
+        # Delegate scanning to a dedicated scanner.
+        self._scanner = RingScanner(
+            timeout=timeout,
+            max_scan_attempts=max_scan_attempts,
+            target_address=target_address,
+            pair_on_connect=pair_on_connect,
         )
 
-        max_attempts = 1 if self.target_address else self.max_scan_attempts
-        for attempt in range(1, max_attempts + 1):
-            try:
-                # Quick scan - find all devices
-                devices = await BleakScanner.discover(timeout=2.0)
+    # ------------------------------------------------------------------
+    # Delegated scanning methods
+    # ------------------------------------------------------------------
 
-                # Filter Nuanic / Moodmetric devices
-                for device in devices:
-                    if not device.name or (
-                        "Nuanic" not in device.name and "Moodmetric" not in device.name
-                    ):
-                        continue
+    async def _reset_bluetooth_radio(self) -> bool:
+        """Delegate to module-level radio reset."""
+        return await _reset_bluetooth_radio()
 
-                    # If target address specified, only match that one
-                    if self.target_address:
-                        if device.address.lower() == self.target_address.lower():
-                            self.device = device
-                            return device
-                    else:
-                        # No target specified, accept first available
-                        self.device = device
-                        return device
-
-                # Not found in this scan
-                if attempt < max_attempts:
-                    await asyncio.sleep(0.5)  # Short pause between scans
-
-            except asyncio.CancelledError:
-                # Re-raise so Ctrl+C still works
-                raise
-            except Exception as e:
-                if attempt < max_attempts:
-                    await asyncio.sleep(0.5)
-
-        return None
-
-    def _sanitize_address(self, addr: str) -> str:
-        """Ensure MAC address is clean hex/colons. Removes Unicode corruption."""
-        if not addr:
-            return ""
-        # Keep only hex digits and colons. Strip everything else.
-        import re
-
-        clean = re.sub(r"[^0-9A-Fa-f:]", "", addr)
-        return clean.upper()
-
-    def _sanitize_name(self, name: str) -> str:
-        """Ensure name contains only ASCII characters for safe terminal rendering."""
-        if not name:
-            return ""
-        return "".join(c for c in name if ord(c) < 128)
+    async def find_device(self):
+        """Scan for Nuanic ring (delegated to ``RingScanner``)."""
+        device = await self._scanner.find_device()
+        self.device = device
+        return device
 
     async def list_available_rings(
         self,
@@ -247,144 +104,14 @@ class NuanicConnector:
         silent: bool = False,
     ):
         """Scan and return list of all available Nuanic rings."""
-        if not silent:
-            print(
-                f"[SCAN] Discovering Nuanic rings (timeout: {scan_timeout}s, attempts: {attempts})..."
-            )
-
-        from nuanic_ring.ring_profiles import (
-            MOODMETRIC_SERVICE_UUIDS,
-            NUANIC_SERVICE_UUID,
+        return await self._scanner.list_available_rings(
+            include_device=include_device,
+            scan_timeout=scan_timeout,
+            attempts=attempts,
+            retry_delay=retry_delay,
+            stop_if_found=stop_if_found,
+            silent=silent,
         )
-
-        merged = {}
-        try:
-            for attempt in range(1, max(1, attempts) + 1):
-                if attempts > 1 and not silent:
-                    print(f"[SCAN] Attempt {attempt}/{attempts}...")
-
-                current_timeout = scan_timeout
-                if attempt == 1 and stop_if_found:
-                    current_timeout = min(3.0, scan_timeout)
-
-                # Use discover(return_adv=True) for a thorough window
-                devices_map = await BleakScanner.discover(
-                    timeout=max(2.0, current_timeout), return_adv=True
-                )
-
-                for device, adv in devices_map.values():
-                    name = device.name or ""
-                    clean_name = self._sanitize_name(name)
-
-                    adv_uuids = [u.lower() for u in adv.service_uuids]
-
-                    is_nuanic = (
-                        "Nuanic" in name or NUANIC_SERVICE_UUID.lower() in adv_uuids
-                    )
-                    is_moodmetric = "Moodmetric" in name or any(
-                        u.lower() in adv_uuids for u in MOODMETRIC_SERVICE_UUIDS
-                    )
-
-                    if is_nuanic or is_moodmetric:
-                        addr_raw = device.address or ""
-                        addr = self._sanitize_address(addr_raw)
-
-                        if not addr:
-                            continue
-
-                        entry = {
-                            "address": addr,
-                            "name": (
-                                clean_name
-                                if clean_name
-                                else ("Nuanic" if is_nuanic else "Moodmetric")
-                            ),
-                        }
-                        if include_device:
-                            entry["device"] = device
-                        merged[addr] = entry
-
-                if stop_if_found and merged:
-                    break
-
-                if attempt < attempts:
-                    await asyncio.sleep(retry_delay)
-
-            return list(merged.values())
-
-        except Exception as e:
-            if not isinstance(e, asyncio.CancelledError):
-                print(f"[WARN] Scan error: {e}")
-            return []
-
-    def _get_windows_paired_rings(self):
-        """Return paired Nuanic/Moodmetric rings from Windows PnP records.
-
-        This helps when rings are connected in Windows but not currently visible
-        in active BLE advertisements.
-        """
-        if platform.system() != "Windows":
-            return []
-
-        ps_cmd = (
-            "$rows = Get-PnpDevice -Class Bluetooth "
-            "| Where-Object { $_.FriendlyName -match 'Nuanic|Moodmetric' -or $_.InstanceId -match 'BTHLE\\\\DEV_' }; "
-            "foreach ($r in $rows) { "
-            "  $addr = ''; "
-            "  try { $addr = (Get-PnpDeviceProperty -InstanceId $r.InstanceId -KeyName 'DEVPKEY_Bluetooth_DeviceAddress').Data } catch {} ; "
-            "  Write-Output ($r.FriendlyName + '|' + $addr + '|' + $r.InstanceId + '|' + $r.Status) "
-            "}"
-        )
-
-        try:
-            completed = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_cmd],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if completed.returncode != 0 or not completed.stdout.strip():
-                return []
-            rings = []
-            for line in completed.stdout.splitlines():
-                if not line or "|" not in line:
-                    continue
-                parts = line.split("|", 3)
-                if len(parts) != 4:
-                    continue
-
-                name_raw = (parts[0] or "").strip()
-                addr_raw = (parts[1] or "").strip().upper()
-                if not name_raw:
-                    continue
-                if (
-                    "NUANIC" not in name_raw.upper()
-                    and "MOODMETRIC" not in name_raw.upper()
-                ):
-                    continue
-
-                name = self._sanitize_name(name_raw)
-                addr = self._sanitize_address(addr_raw)
-
-                if not addr:
-                    continue
-
-                # Standardize 12-char paired addresses into XX:XX:XX...
-                if len(addr) == 12 and ":" not in addr:
-                    addr = ":".join(addr[i : i + 2] for i in range(0, 12, 2))
-
-                rings.append(
-                    {"address": addr, "name": name, "source": "windows-paired"}
-                )
-
-            # Deduplicate by address
-            dedup = {}
-            for ring in rings:
-                dedup[ring["address"]] = ring
-            return list(dedup.values())
-        except Exception:
-            return []
 
     async def list_available_rings_with_paired(
         self,
@@ -394,81 +121,60 @@ class NuanicConnector:
         silent: bool = False,
     ):
         """Return discoverable rings plus Windows paired rings (if any)."""
-        scanned = await self.list_available_rings(
-            include_device=True,
+        return await self._scanner.list_available_rings_with_paired(
             scan_timeout=scan_timeout,
             attempts=attempts,
-            retry_delay=1.0,
             stop_if_found=stop_if_found,
             silent=silent,
         )
-        paired = self._get_windows_paired_rings()
 
-        merged = {}
-        # Scanned results take priority because they contain active BleakDevice objects
-        for ring in scanned:
-            addr = self._sanitize_address(ring["address"])
-            name = self._sanitize_name(ring["name"])
-            merged[addr.upper()] = {
-                "address": addr,
-                "name": name,
-                "device": ring.get("device"),
-                "source": "scan",
-            }
-
-        for ring in paired:
-            addr = self._sanitize_address(ring["address"])
-            name = self._sanitize_name(ring["name"])
-            key = addr.upper()
-            if key not in merged:
-                merged[key] = {
-                    "address": addr,
-                    "name": name,
-                    "device": None,
-                    "source": "windows-paired",
-                }
-
-        return list(merged.values())
+    async def discover_all_matching_rings(
+        self,
+        include_device: bool = True,
+        scan_timeout: float = 6.0,
+        attempts: int = 3,
+        retry_delay: float = 0.5,
+        stop_if_found: bool = True,
+        silent: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Discover all visible Nuanic/Moodmetric rings."""
+        return await self._scanner.discover_all_matching_rings(
+            include_device=include_device,
+            scan_timeout=scan_timeout,
+            attempts=attempts,
+            retry_delay=retry_delay,
+            stop_if_found=stop_if_found,
+            silent=silent,
+        )
 
     async def select_ring_interactive(self):
         """Interactive ring selection menu.
 
-        NOTE: This is called automatically by connect() if no target_address is set.
-        No need to call this manually unless you want to select before connecting.
-
-        Scans for available rings and lets user choose which one to connect to.
-        Updates self.target_address with the selected ring's MAC.
+        Scans for available rings and lets the user choose which one
+        to connect to.  Updates ``self.target_address`` and ``self.device``
+        with the selection.
 
         Returns:
-            str: Selected MAC address, or None if cancelled
+            str: Selected MAC address, or ``None`` if cancelled.
         """
         print("\n" + "=" * 60)
         print("RING SELECTION")
         print("=" * 60)
 
-        # Pairing-mode rings can advertise intermittently. Include Windows paired
-        # records so users can still select already-connected rings.
-        rings = await self.list_available_rings_with_paired()
+        rings = await self._scanner.list_available_rings_with_paired()
 
         if not rings:
             print("[!] No Nuanic rings found.")
-
-            # The ring is most likely still 'connected' to Windows from a
-            # previous session.  Reset the BT radio (=toggle off/on) to flush
-            # the stale ACL link, then rescan once.
             print(
-                "[BT-RESET] Stale connection detected - resetting "
-                "Bluetooth adapter..."
+                "[BT-RESET] Stale connection detected - resetting Bluetooth adapter..."
             )
-            reset_ok = await self._reset_bluetooth_radio()
+            reset_ok = await _reset_bluetooth_radio()
             if reset_ok:
                 print("[BT-RESET] Rescanning after radio reset...")
-                rings = await self.list_available_rings_with_paired()
+                rings = await self._scanner.list_available_rings_with_paired()
 
             if not rings:
-                # Radio toggle didn't help (or not on Windows).
-                # Fall back to direct connect using the cached address.
-                cached = self._load_last_address()
+                cached = _load_last_address()
                 if cached:
                     print(
                         f"[HINT] Ring still not visible - trying direct "
@@ -494,7 +200,6 @@ class NuanicConnector:
             print("=" * 60 + "\n")
             return rings[0]["address"]
 
-        # Multiple rings - let user choose
         while True:
             try:
                 loop = asyncio.get_event_loop()
@@ -520,6 +225,45 @@ class NuanicConnector:
             except ValueError:
                 print(f"Invalid input. Enter 1-{len(rings)} or 'q'")
 
+    # ------------------------------------------------------------------
+    # Connection lifecycle
+    # ------------------------------------------------------------------
+
+    def _on_disconnect_for(self, address: str):
+        """Factory for per-device disconnected callbacks."""
+
+        def _cb(_client):
+            event = self._disconnect_events.get(address)
+            if event:
+                event.set()
+            if (
+                self.client
+                and getattr(self.client, "address", "").lower() == address.lower()
+            ):
+                self._disconnect_event.set()
+            print(f"[DISC] BLE disconnect callback fired for {address}")
+
+        return _cb
+
+    def _create_bleak_client(self, target, disconnected_callback=None):
+        """Create BleakClient with robust Windows-friendly arguments."""
+        kwargs = {
+            "timeout": self._scanner.timeout,
+            "disconnected_callback": disconnected_callback,
+        }
+
+        if platform.system() == "Windows":
+            kwargs["use_cached_services"] = False
+
+        try:
+            params = inspect.signature(BleakClient).parameters
+            if "pair" in params:
+                kwargs["pair"] = self.pair_on_connect
+        except Exception:
+            pass
+
+        return BleakClient(target, **kwargs)
+
     async def _cleanup_client(self, address: Optional[str] = None):
         """Strict cleanup of existing BLE client state to prevent zombie connections."""
         target_client = self.clients.get(address.upper()) if address else self.client
@@ -537,8 +281,6 @@ class NuanicConnector:
                     if event:
                         event.clear()
 
-                # Explicitly attempt to stop notifications before disconnecting
-                # to help Windows clear the GATT cache cleanly.
                 for char_uuid in [
                     self.STRESS_CHARACTERISTIC,
                     self.IMU_CHARACTERISTIC,
@@ -555,7 +297,6 @@ class NuanicConnector:
                 )
                 await target_client.disconnect()
 
-                # Wait explicitly for the disconnected_callback to fire
                 try:
                     if not address:
                         await asyncio.wait_for(
@@ -571,10 +312,8 @@ class NuanicConnector:
         except Exception as e:
             print(f"[CLEANUP] Error during disconnect: {e}")
         finally:
-            # FORCE cleanup for Windows ghost connections:
             if platform.system() == "Windows":
                 try:
-                    # Explicitly close internal WinRT handles to drop the ACL link
                     if hasattr(target_client, "_backend"):
                         if (
                             hasattr(target_client._backend, "_session")
@@ -589,9 +328,8 @@ class NuanicConnector:
                 except Exception:
                     pass
 
-            # Break circular reference (self -> client -> disconnected_callback -> self)
             try:
-                target_client.set_disconnected_callback(None)
+                target_client.set_disconnected_callback(None)  # type: ignore[union-attr]
             except Exception:
                 pass
 
@@ -600,11 +338,8 @@ class NuanicConnector:
             else:
                 self.clients.pop(address.upper(), None)
 
-            # Force garbage collector to release lingering COM objects before process exits
             gc.collect()
-            await asyncio.sleep(
-                0.5
-            )  # Give Windows driver time to process the handle closure
+            await asyncio.sleep(0.5)
 
     async def connect(self):
         """Connect to Nuanic ring with automatic retry and recovery."""
@@ -615,55 +350,6 @@ class NuanicConnector:
                 print("[FAIL] No ring selected\n")
                 return False
         return await self.connect_device(self.target_address, device=self.device)
-
-    async def discover_all_matching_rings(
-        self,
-        include_device: bool = True,
-        scan_timeout: float = 6.0,
-        attempts: int = 3,
-        retry_delay: float = 0.5,
-        stop_if_found: bool = True,
-        silent: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """Discover all visible Nuanic/Moodmetric rings."""
-        scanned = await self.list_available_rings(
-            include_device=include_device,
-            scan_timeout=scan_timeout,
-            attempts=attempts,
-            retry_delay=retry_delay,
-            stop_if_found=stop_if_found,
-            silent=silent,
-        )
-
-        # On Windows, merge in paired records to catch bonded devices that do not
-        # advertise reliably during a short scan window.
-        if platform.system() != "Windows":
-            return scanned
-
-        paired = self._get_windows_paired_rings()
-        merged = {entry["address"].upper(): entry for entry in scanned}
-        for entry in paired:
-            key = entry["address"].upper()
-            if key not in merged:
-                merged[key] = {
-                    "address": entry["address"],
-                    "name": entry.get("name") or "Nuanic",
-                    "device": None,
-                }
-
-        # Fallback to cached address if no rings found
-        if not merged:
-            cached = self._load_last_address()
-            if cached:
-                cached_clean = self._sanitize_address(cached)
-                if cached_clean:
-                    merged[cached_clean.upper()] = {
-                        "address": cached_clean,
-                        "name": "Nuanic (cached)",
-                        "device": None,
-                    }
-
-        return list(merged.values())
 
     async def _get_or_create_disconnect_event(self, address: str) -> asyncio.Event:
         """Thread-safe fetch-or-create for per-device disconnect event."""
@@ -703,11 +389,10 @@ class NuanicConnector:
                 if device is not None:
                     self.devices[address] = device
 
-                # Keep legacy single-device fields aligned with the most recent connect.
                 self.client = client
                 self.device = device
                 self.target_address = address
-                self._save_last_address(address)
+                _save_last_address(address)
                 return True
             except asyncio.CancelledError:
                 try:
@@ -736,14 +421,8 @@ class NuanicConnector:
         scan_timeout: float = 4.0,
         scan_attempts: int = 2,
     ) -> Dict[str, bool]:
-        """Connect to many rings with staggered timing to avoid adapter overload.
-
-        Returns:
-            dict: mapping {address: bool}
-        """
+        """Connect to many rings with staggered timing."""
         results = {}
-
-        # Build target list from discovery when explicit addresses are not provided.
         discovered = await self.discover_all_matching_rings(
             include_device=True,
             scan_timeout=scan_timeout,
@@ -783,7 +462,6 @@ class NuanicConnector:
                     pass
                 finally:
                     self.devices.pop(address, None)
-                    # self.clients.pop happens in _cleanup_client
                 print(f"[OK] Disconnected {address}")
         else:
             had_any = False
@@ -795,7 +473,6 @@ class NuanicConnector:
                     pass
                 finally:
                     self.devices.pop(addr, None)
-                    # self.clients.pop happens in _cleanup_client
 
             if self.client:
                 was_connected = bool(getattr(self.client, "is_connected", False))
@@ -812,24 +489,18 @@ class NuanicConnector:
             await self._unpair_device()
 
     async def _unpair_device(self):
-        """Remove device from Windows Bluetooth pairing.
-        Uses Windows PowerShell to safely remove the pairing.
-        """
+        """Remove device from Windows Bluetooth pairing."""
         if not self.device:
             return
 
         try:
-            # Convert BLE address to Windows format (remove colons)
             ble_address = self.device.address.replace(":", "")
-
-            # PowerShell command to remove Bluetooth device
             ps_cmd = (
                 f"Remove-Item -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\Keys\\*\\{ble_address}' "
                 "-Force -ErrorAction SilentlyContinue; "
                 f"Get-PnpDevice -FriendlyName '*{self.device.name}*' | Remove-PnpDevice -Force -ErrorAction SilentlyContinue"
             )
 
-            # Run PowerShell command
             completed = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_cmd],
                 capture_output=True,
@@ -839,7 +510,6 @@ class NuanicConnector:
             )
 
             if completed.returncode == 0 or completed.returncode == 1:
-                # 1 = item not found (already unpaired)
                 print(f"[OK] Removed {self.device.name} from Windows Bluetooth")
             else:
                 err_msg = (
@@ -851,6 +521,10 @@ class NuanicConnector:
             print("[WARN] Unpair timeout")
         except Exception as e:
             print(f"[WARN] Unpair error: {e}")
+
+    # ------------------------------------------------------------------
+    # Battery and service discovery
+    # ------------------------------------------------------------------
 
     async def read_battery(self, address: Optional[str] = None) -> Optional[int]:
         """Read battery level"""
@@ -865,6 +539,25 @@ class NuanicConnector:
             print(f"[FAIL] Battery read error: {e}")
             return None
 
+    async def discover_services(self):
+        """Discover and print all services and characteristics."""
+        if not self.client or not self.client.is_connected:
+            print("[FAIL] Not connected to any device.")
+            return
+
+        print(f"\n[INFO] Discovering services for {self.device.name}...")
+        for service in self.client.services:
+            print(f"  [SERVICE] {service.uuid}: {service.description}")
+            for char in service.characteristics:
+                print(
+                    f"    [CHAR] {char.uuid}: {char.description}, Properties: {char.properties}"
+                )
+        print("[INFO] Service discovery complete.\n")
+
+    # ------------------------------------------------------------------
+    # Accessors
+    # ------------------------------------------------------------------
+
     def get_client(self, address: Optional[str] = None) -> Optional[BleakClient]:
         """Return a connected client by address or the legacy single client."""
         if address:
@@ -878,6 +571,10 @@ class NuanicConnector:
             if getattr(client, "is_connected", False):
                 addrs.append(address)
         return addrs
+
+    # ------------------------------------------------------------------
+    # Subscription helpers
+    # ------------------------------------------------------------------
 
     async def _subscribe(
         self,
@@ -965,32 +662,12 @@ class NuanicConnector:
         """Unsubscribe from LIVE_EDA UUID notifications."""
         await self._unsubscribe(self.MYSTERY_NOTIFY_CHARACTERISTIC, address)
 
-    async def discover_services(self):
-        """Discover and print all services and characteristics."""
-        if not self.client or not self.client.is_connected:
-            print("[FAIL] Not connected to any device.")
-            return
-
-        print(f"\n[INFO] Discovering services for {self.device.name}...")
-        for service in self.client.services:
-            print(f"  [SERVICE] {service.uuid}: {service.description}")
-            for char in service.characteristics:
-                print(
-                    f"    [CHAR] {char.uuid}: {char.description}, Properties: {char.properties}"
-                )
-        print("[INFO] Service discovery complete.\n")
-
     async def attempt_set_sample_rate(
         self,
         target_hz: int,
         address: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Attempt to request ring sample-rate configuration from host side.
-
-        Notes:
-        - A successful write or echo means transport-level success only.
-        - Firmware may still ignore the requested rate behaviorally.
-        """
+        """Attempt to request ring sample-rate configuration from host side."""
         client = self.get_client(address)
         if not client or not getattr(client, "is_connected", False):
             return {
@@ -1000,7 +677,6 @@ class NuanicConnector:
                 "address": (address or ""),
             }
 
-        # Give the ring stack a moment to settle after connection
         await asyncio.sleep(0.5)
 
         target_hz = min(100, max(1, int(target_hz)))
