@@ -9,9 +9,9 @@ import inspect
 import platform
 import struct
 import subprocess
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
-from bleak import BleakClient
+from bleak import BleakClient, BleakGATTCharacteristic
 
 from nuanic_ring._scanner import (
     RingScanner,
@@ -49,21 +49,21 @@ class NuanicConnector:
 
     def __init__(
         self,
-        timeout=7.0,
-        max_scan_attempts=3,
-        max_connect_attempts=3,
-        connect_backoff_seconds=2.0,
-        target_address=None,
-        unpair_on_disconnect=False,
-        pair_on_connect=True,
-    ):
+        timeout: float = 7.0,
+        max_scan_attempts: int = 3,
+        max_connect_attempts: int = 3,
+        connect_backoff_seconds: float = 2.0,
+        target_address: Optional[str] = None,
+        unpair_on_disconnect: bool = False,
+        pair_on_connect: bool = True,
+    ) -> None:
         self.max_connect_attempts = max_connect_attempts
         self.connect_backoff_seconds = connect_backoff_seconds
-        self.target_address = target_address
+        self.target_address: Optional[str] = target_address
         self.unpair_on_disconnect = unpair_on_disconnect
         self.pair_on_connect = pair_on_connect
-        self.client = None
-        self.device = None
+        self.client: Optional[BleakClient] = None
+        self.device: Optional[Any] = None
         self._disconnect_event = asyncio.Event()
 
         # Multi-device runtime registries keyed by BLE MAC address.
@@ -329,7 +329,7 @@ class NuanicConnector:
                     pass
 
             try:
-                target_client.set_disconnected_callback(None)  # type: ignore[union-attr]
+                target_client.set_disconnected_callback(None)  # type: ignore[attr-defined]
             except Exception:
                 pass
 
@@ -579,7 +579,7 @@ class NuanicConnector:
     async def _subscribe(
         self,
         char_uuid: str,
-        callback: Callable[[Any, bytes], None],
+        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
         address: Optional[str] = None,
         label: str = "data",
     ) -> bool:
@@ -605,7 +605,7 @@ class NuanicConnector:
 
     async def subscribe_to_stress(
         self,
-        callback: Callable[[Any, bytes], None],
+        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to stress data notifications"""
@@ -615,7 +615,7 @@ class NuanicConnector:
 
     async def subscribe_to_imu(
         self,
-        callback: Callable[[Any, bytes], None],
+        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to IMU (accelerometer) notifications"""
@@ -633,7 +633,7 @@ class NuanicConnector:
 
     async def subscribe_to_raw_eda(
         self,
-        callback: Callable[[Any, bytes], None],
+        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to raw EDA data notifications"""
@@ -647,7 +647,7 @@ class NuanicConnector:
 
     async def subscribe_to_live_eda(
         self,
-        callback: Callable[[Any, bytes], None],
+        callback: Callable[[BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]],
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to LIVE_EDA UUID notifications (42dcb71b...)."""
