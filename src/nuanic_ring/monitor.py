@@ -9,7 +9,7 @@ import platform
 import struct
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
@@ -70,6 +70,12 @@ class RingDeviceState:
     # Reconnect bookkeeping
     reconnect_attempt: int = 0
     last_seen: Optional[datetime] = None
+
+    # Timestamp smoothing — per-stream anchors for hardware-clock reconstruction
+    d306_ts_anchor: Optional[datetime] = None
+    d306_clock_offset: Optional[int] = None
+    imu_ts_anchor: Optional[datetime] = None
+    imu_clock_offset: Optional[int] = None
 
     # Rate diagnostics and control status
     d306_observed_hz: float = 0.0
@@ -146,6 +152,49 @@ class NuanicMonitor:
         if not self.start_time:
             return 0.0
         return max(0.001, (datetime.now() - self.start_time).total_seconds())
+
+    def _get_smoothed_time(
+        self,
+        state: RingDeviceState,
+        stream: str,
+        clock: int,
+    ) -> Tuple[datetime, int]:
+        """Reconstruct a millisecond-accurate PC timestamp from the ring's hardware clock.
+
+        Anchors the first packet's clock value to ``datetime.now()``, then derives
+        every subsequent timestamp as ``anchor + (clock − offset)`` ms. This eliminates
+        duplicate timestamps caused by BLE packet bursting / coarse Windows clock
+        ticks. D306 and IMU have independent counters, so each stream gets its own
+        anchor.
+        """
+        if stream == "d306":
+            anchor = state.d306_ts_anchor
+            offset = state.d306_clock_offset
+        else:
+            anchor = state.imu_ts_anchor
+            offset = state.imu_clock_offset
+
+        if anchor is None or offset is None or clock < offset:
+            anchor = datetime.now()
+            offset = clock
+            if stream == "d306":
+                state.d306_ts_anchor = anchor
+                state.d306_clock_offset = offset
+            else:
+                state.imu_ts_anchor = anchor
+                state.imu_clock_offset = offset
+
+        elapsed_ms = (clock - offset) & 0xFFFFFFFF
+        smoothed_ts = anchor + timedelta(milliseconds=elapsed_ms)
+
+        if self.start_time:
+            elapsed_session_ms = int(
+                (smoothed_ts - self.start_time).total_seconds() * 1000
+            )
+        else:
+            elapsed_session_ms = elapsed_ms
+
+        return smoothed_ts, max(1, elapsed_session_ms)
 
     def _parse_d306_packet(self, data: bytes) -> Optional[Dict[str, int]]:
         if len(data) != 16:
@@ -428,9 +477,23 @@ class NuanicMonitor:
         except asyncio.QueueFull:
             state.dropped_rows += 1
 
-    def _base_row(self, state: RingDeviceState, data_type: str) -> List[Any]:
-        timestamp = datetime.now().isoformat(timespec="milliseconds")
-        elapsed_ms = int(self._elapsed_seconds() * 1000)
+    def _base_row(
+        self,
+        state: RingDeviceState,
+        data_type: str,
+        custom_ts: Optional[datetime] = None,
+        custom_elapsed: Optional[int] = None,
+    ) -> List[Any]:
+        if custom_ts is not None:
+            timestamp = custom_ts.isoformat(timespec="milliseconds")
+        else:
+            timestamp = datetime.now().isoformat(timespec="milliseconds")
+
+        if custom_elapsed is not None:
+            elapsed_ms = custom_elapsed
+        else:
+            elapsed_ms = int(self._elapsed_seconds() * 1000)
+
         return [
             timestamp,
             elapsed_ms,
@@ -656,8 +719,14 @@ class NuanicMonitor:
                     }
                 )
 
+                smoothed_ts, elapsed_ms = self._get_smoothed_time(state, "d306", clock)
+                _row_kw: Dict[str, Any] = {
+                    "custom_ts": smoothed_ts,
+                    "custom_elapsed": elapsed_ms,
+                }
+
                 row = (
-                    self._base_row(state, "D306_EDA")
+                    self._base_row(state, "D306_EDA", **_row_kw)
                     + [
                         eda_value,
                         dne_stress_index,
@@ -683,7 +752,7 @@ class NuanicMonitor:
                 )
                 self._enqueue_log(state, row)
 
-                stream_row = self._base_row(state, "D306_EDA") + [
+                stream_row = self._base_row(state, "D306_EDA", **_row_kw) + [
                     clock,
                     context,
                     eda_value,
@@ -703,7 +772,7 @@ class NuanicMonitor:
                     "",
                 ]
                 computed_row = (
-                    self._base_row(state, "D306_EDA_COMPUTED")
+                    self._base_row(state, "D306_EDA_COMPUTED", **_row_kw)
                     + [
                         clock,
                         context,
@@ -762,8 +831,16 @@ class NuanicMonitor:
                 )
                 state.imu_batch_buffer.append(parsed_batch)
 
+                smoothed_ts, elapsed_ms = self._get_smoothed_time(
+                    state, "imu", parsed_batch["clock"]
+                )
+                _row_kw: Dict[str, Any] = {
+                    "custom_ts": smoothed_ts,
+                    "custom_elapsed": elapsed_ms,
+                }
+
                 row = (
-                    self._base_row(state, "IMU_BATCH_468F")
+                    self._base_row(state, "IMU_BATCH_468F", **_row_kw)
                     + [
                         "",  # 5: EDA_Raw_Value
                         "",  # 6: Stress_Index
@@ -790,7 +867,7 @@ class NuanicMonitor:
                 self._enqueue_log(state, row)
 
                 imu_samples_json = json.dumps(parsed_batch["samples"])
-                stream_row = self._base_row(state, "IMU_BATCH_468F") + [
+                stream_row = self._base_row(state, "IMU_BATCH_468F", **_row_kw) + [
                     "",
                     "",
                     "",
@@ -810,7 +887,7 @@ class NuanicMonitor:
                     "",
                 ]
                 computed_row = (
-                    self._base_row(state, "IMU_BATCH_468F_COMPUTED")
+                    self._base_row(state, "IMU_BATCH_468F_COMPUTED", **_row_kw)
                     + [
                         "",
                         "",
