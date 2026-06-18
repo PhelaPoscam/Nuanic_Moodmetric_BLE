@@ -78,23 +78,23 @@ def _best_lag_correlation(
 def _analyze_single_file(path: Path) -> ScoreComparison:
     df = pd.read_csv(path)
 
-    df["MM_Arousal_Score"] = pd.to_numeric(
+    df["MM_Arousal_Score"] = pd.to_numeric(  # type: ignore[call-overload]
         df.get("MM_Arousal_Score"),
         errors="coerce",
     )
-    df["Stress_Index"] = pd.to_numeric(
+    df["Stress_Index"] = pd.to_numeric(  # type: ignore[call-overload]
         df.get("Stress_Index"),
         errors="coerce",
     )
-    df["MM_Calibrated"] = pd.to_numeric(
+    df["MM_Calibrated"] = pd.to_numeric(  # type: ignore[call-overload]
         df.get("MM_Calibrated"),
         errors="coerce",
     ).fillna(0)
-    df["D306_Observed_Hz"] = pd.to_numeric(
+    df["D306_Observed_Hz"] = pd.to_numeric(  # type: ignore[call-overload]
         df.get("D306_Observed_Hz"),
         errors="coerce",
     )
-    df["IMU_Observed_Hz"] = pd.to_numeric(
+    df["IMU_Observed_Hz"] = pd.to_numeric(  # type: ignore[call-overload]
         df.get("IMU_Observed_Hz"),
         errors="coerce",
     )

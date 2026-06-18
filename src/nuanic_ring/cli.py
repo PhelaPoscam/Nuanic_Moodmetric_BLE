@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from nuanic_ring.connector import NuanicConnector
+from nuanic_ring.discover_services import run_diagnostics
 from nuanic_ring.monitor import NuanicMonitor
 from nuanic_ring.post_analysis import (
     analyze_latest_ring_logs,
@@ -28,7 +29,7 @@ def _stdout_encoding_is_utf8() -> bool:
 if sys.platform == "win32":
     try:
         if not _stdout_encoding_is_utf8():
-            sys.stdout.reconfigure(encoding="utf-8")
+            sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     except Exception:
         pass
 
@@ -284,6 +285,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--post-analysis", choices=["yes", "no"], default="no")
     parser.add_argument("--list-rings", action="store_true")
     parser.add_argument("--discover", action="store_true")
+    parser.add_argument(
+        "--subscribe-streams",
+        action="store_true",
+        help="[with --discover] Subscribe to ring notify streams and print live data",
+    )
+    parser.add_argument(
+        "--listen-seconds",
+        type=int,
+        default=None,
+        help="[with --discover --subscribe-streams] Duration in seconds (default: until Ctrl+C)",
+    )
     parser.add_argument("--scan-timeout", type=float, default=6.0)
     parser.add_argument("--scan-attempts", type=int, default=3)
     parser.add_argument("--waveform", action="store_true")
@@ -334,7 +346,11 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
             console.print("[red][FAIL] Could not connect to ring[/red]")
             return 1
         try:
-            await connector.discover_services()
+            await run_diagnostics(
+                connector.client,
+                subscribe_streams=args.subscribe_core_streams,
+                listen_seconds=args.listen_seconds,
+            )
         finally:
             await connector.disconnect()
         return 0

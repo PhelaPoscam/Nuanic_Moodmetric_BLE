@@ -2,10 +2,9 @@
 
 Plots (UUID-anchored, candidate semantics):
 
-ponytail: matplotlib updates use threading instead of asyncio. Works but
-mixing threading + asyncio breaks at 3am. Switch to a matplotlib async
-backend (e.g. Qt) or use FigureCanvasAgg + manual blit in an asyncio loop
-when this causes its first heisenbug.
+ponytail: matplotlib runs in a thread pool (run_in_executor) so the GUI
+event loop never shares a thread with asyncio. Shared state guarded by
+threading.Lock.
 - 42dcb71b LIVE_EDA signal metric (HQI ohm or fallback int16 mean-abs)
 - 42dcb71b LIVE_EDA ohm (when HQI 14-byte packets are available)
 - d306262b LIVE_DNA word0..word3 (uint32 little-endian)
@@ -56,24 +55,24 @@ class WaveformState:
         self.live_dna_packets = 0
         self.latest_eda_mode = "none"
 
-        self.live_eda_signal_index = deque(maxlen=history_points)
-        self.live_eda_signal_wave = deque(maxlen=history_points)
-        self.live_eda_ohm_index = deque(maxlen=history_points)
-        self.live_eda_ohm_wave = deque(maxlen=history_points)
+        self.live_eda_signal_index: deque[float] = deque(maxlen=history_points)
+        self.live_eda_signal_wave: deque[float] = deque(maxlen=history_points)
+        self.live_eda_ohm_index: deque[float] = deque(maxlen=history_points)
+        self.live_eda_ohm_wave: deque[float] = deque(maxlen=history_points)
 
-        self.live_dna_index = deque(maxlen=history_points)
-        self.live_dna_pc_seconds = deque(maxlen=history_points)
-        self.live_dna_word0 = deque(maxlen=history_points)
-        self.live_dna_word1 = deque(maxlen=history_points)
-        self.live_dna_word2 = deque(maxlen=history_points)
-        self.live_dna_word3 = deque(maxlen=history_points)
+        self.live_dna_index: deque[float] = deque(maxlen=history_points)
+        self.live_dna_pc_seconds: deque[float] = deque(maxlen=history_points)
+        self.live_dna_word0: deque[float] = deque(maxlen=history_points)
+        self.live_dna_word1: deque[float] = deque(maxlen=history_points)
+        self.live_dna_word2: deque[float] = deque(maxlen=history_points)
+        self.live_dna_word3: deque[float] = deque(maxlen=history_points)
 
         self.imu_packets = 0
-        self.imu_index = deque(maxlen=history_points)
-        self.imu_intensity = deque(maxlen=history_points)
+        self.imu_index: deque[float] = deque(maxlen=history_points)
+        self.imu_intensity: deque[float] = deque(maxlen=history_points)
 
-        self.mm_arousal_wave = deque(maxlen=history_points)
-        self.mm_filtered_us_wave = deque(maxlen=history_points)
+        self.mm_arousal_wave: deque[float] = deque(maxlen=history_points)
+        self.mm_filtered_us_wave: deque[float] = deque(maxlen=history_points)
         self.mm_calibration_remaining = 0.0
         self.mm_calibrated = False
 
@@ -255,15 +254,20 @@ def _autoscale_axis(
     axis.set_ylim(ymin - pad, ymax + pad)
 
 
-async def run_plot_async(
+def _run_plot_blocking(
     viewer: NuanicWaveformViewer,
     window_seconds: int,
     refresh_ms: int,
     smooth_window: int = 1,
 ):
-    """Run matplotlib UI while asyncio keeps BLE callbacks flowing."""
+    """Run matplotlib UI in a dedicated thread.
+
+    By keeping matplotlib off the asyncio event loop we avoid the
+    heisenbugs that come from mixing GUI event loops with async I/O.
+    Shared state is protected by ``viewer.state.lock``.
+    """
     plt.style.use("dark_background")
-    plt.ioff()  # Turn off interactive mode to avoid event loop conflicts
+    plt.ioff()
 
     fig, axes = plt.subplots(3, 2, figsize=(13, 12), sharex=False, facecolor="#121212")
     fig.suptitle(
@@ -272,7 +276,6 @@ async def run_plot_async(
         fontsize=16,
         fontweight="bold",
     )
-    # Set plot backgrounds
     for ax_array in axes:
         for ax in ax_array:
             ax.set_facecolor("#1e1e1e")
@@ -285,10 +288,10 @@ async def run_plot_async(
     ax_empty = axes[2][1]
     ax_empty.axis("off")
 
-    (line_raw,) = ax_raw.plot([], [], lw=1.2, color="#BBBBBB")  # Grey (Raw)
-    (line_eda,) = ax_eda.plot([], [], lw=1.8, color="#00ffff")  # Cyan (Filtered)
-    (line_arousal,) = ax_arousal.plot([], [], lw=1.8, color="#FFD700")  # Gold (Arousal)
-    (line_imu,) = ax_imu.plot([], [], lw=1.5, color="#ff00ff")  # Hot Pink (IMU)
+    (line_raw,) = ax_raw.plot([], [], lw=1.2, color="#BBBBBB")
+    (line_eda,) = ax_eda.plot([], [], lw=1.8, color="#00ffff")
+    (line_arousal,) = ax_arousal.plot([], [], lw=1.8, color="#FFD700")
+    (line_imu,) = ax_imu.plot([], [], lw=1.5, color="#ff00ff")
 
     ax_raw.set_title("Raw EDA (ADC Count)", color="#BBBBBB")
     ax_eda.set_title("Filtered Conductance (uS)", color="#00ffff")
@@ -325,13 +328,11 @@ async def run_plot_async(
     max_points = max(200, window_seconds * 100)
 
     plt.tight_layout()
-    # Show the figure window
     fig.show()
     fig.canvas.draw()
 
     try:
         while viewer._running:
-            # Check if figure window was closed by user
             if not plt.fignum_exists(fig.number):
                 break
             with viewer.state.lock:
@@ -366,7 +367,7 @@ async def run_plot_async(
             )
 
             summary_text.set_text(
-                "Nuance Physiological Summary\n"
+                "Physiological Summary\n"
                 "----------------------------\n"
                 f"Status:    {cal_status}\n"
                 f"Arousal:   {latest_arousal:.1f}/100\n"
@@ -381,9 +382,7 @@ async def run_plot_async(
             )
 
             fig.canvas.draw_idle()
-            fig.canvas.flush_events()
-            # Use async sleep without matplotlib event processing
-            await asyncio.sleep(refresh_ms / 1000.0)
+            plt.pause(refresh_ms / 1000.0)
 
     except Exception as e:
         print(f"[ERROR] Plotting loop crash: {e}")
@@ -404,7 +403,12 @@ async def run_waveform_viewer(
     attempt_rate_control: bool = False,
     raw_signal: bool = False,
 ) -> int:
-    """Run standalone live telemetry plotter."""
+    """Run standalone live telemetry plotter.
+
+    matplotlib runs in a thread pool (``run_in_executor``) so its GUI event
+    loop never conflicts with the asyncio event loop handling BLE callbacks.
+    Shared state is protected by ``threading.Lock``.
+    """
     viewer = NuanicWaveformViewer(
         ring_addr=ring_addr,
         calibration_seconds=calibration_seconds,
@@ -425,12 +429,15 @@ async def run_waveform_viewer(
 
     worker = asyncio.create_task(viewer.run_until_stopped())
 
+    loop = asyncio.get_running_loop()
     try:
-        await run_plot_async(
+        await loop.run_in_executor(
+            None,
+            _run_plot_blocking,
             viewer,
-            window_seconds=window_seconds,
-            refresh_ms=refresh_ms,
-            smooth_window=smooth_window,
+            window_seconds,
+            refresh_ms,
+            smooth_window,
         )
     except KeyboardInterrupt:
         print("\n[STOP] Interrupted by user")

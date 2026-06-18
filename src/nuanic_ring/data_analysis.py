@@ -28,12 +28,10 @@ def load_nuanic_csv(filepath: str) -> pd.DataFrame:
     df = df.dropna(subset=["stress_raw", "stress_percent", "eda_hex"], how="all")
 
     # Coerce numerics safely
-    df["stress_raw"] = (
-        pd.to_numeric(df.get("stress_raw"), errors="coerce").fillna(0).astype(int)
-    )
-    df["stress_percent"] = pd.to_numeric(
-        df.get("stress_percent"), errors="coerce"
-    ).fillna(0.0)
+    stress_raw = pd.to_numeric(df.get("stress_raw"), errors="coerce")
+    df["stress_raw"] = stress_raw.fillna(0).astype(int)
+    stress_pct = pd.to_numeric(df.get("stress_percent"), errors="coerce")
+    df["stress_percent"] = stress_pct.fillna(0.0)
     df["eda_hex"] = df.get("eda_hex", "").fillna("")
     df["packets"] = df.get("packets", "").fillna("")
     df["timestamps"] = df.get("timestamp", "")
@@ -128,9 +126,9 @@ def fit_mm_equation_from_export(df: pd.DataFrame) -> dict[str, Any] | None:
     }
 
     if use_eda:
-        ret["beta"]["eda_z"] = float(beta[3])
-        ret["feature_means"]["eda"] = float(means[2])
-        ret["feature_stds"]["eda"] = float(stds[2])
+        ret["beta"]["eda_z"] = float(beta[3])  # type: ignore[index]
+        ret["feature_means"]["eda"] = float(means[2])  # type: ignore[index]
+        ret["feature_stds"]["eda"] = float(stds[2])  # type: ignore[index]
 
     return ret
 
@@ -217,7 +215,7 @@ def analyze_eda_hex(eda_series: pd.Series) -> list[dict[str, Any]] | None:
     if valid_hex.empty:
         return None
 
-    channels = [[] for _ in range(4)]
+    channels: list[list[int]] = [[] for _ in range(4)]
 
     # Safe to iterate a small map logic, though parsing binary hex is non-trivial for pd masks
     for _, eda_hex in valid_hex.items():
