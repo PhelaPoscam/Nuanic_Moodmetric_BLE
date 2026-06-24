@@ -8,24 +8,42 @@ version = "0.1.1"
 description = "Nuanic and Moodmetric BLE ring data extraction SDK"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+    { name = "Aleph Campos da Silveira", email = "aleph.camposdasilveira@tuni.fi" }
+]
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+]
 dependencies = [
     "bleak>=0.22.3",
-    "numpy>=1.26.4",
-    "matplotlib>=3.8.4",
-    "scipy>=1.11.4",
-    "pandas>=2.2.2",
-    "rich>=13.7.1"
+    "scipy>=1.11.4"
 ]
 
 [project.optional-dependencies]
+cli = [
+    "rich>=13.7.1",
+    "matplotlib>=3.8.4",
+    "pandas>=2.2.2",
+    "numpy>=1.26.4"
+]
 dev = [
     "mypy>=1.0",
     "pytest>=7.0",
     "pytest-asyncio>=0.20",
     "pytest-cov>=4.1",
     "black>=23.0",
-    "isort>=5.13.2"
+    "isort>=5.13.2",
+    "nuanic-ring[cli]"
 ]
+
+[project.urls]
+Homepage = "https://github.com/PhelaPoscam/Nuanic_Moodmetric_BLE"
+Repository = "https://github.com/PhelaPoscam/Nuanic_Moodmetric_BLE"
+"Bug Tracker" = "https://github.com/PhelaPoscam/Nuanic_Moodmetric_BLE/issues"
 
 [project.scripts]
 nuanic-ring-monitor = "nuanic_ring.cli:ring_monitor"

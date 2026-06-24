@@ -13,6 +13,20 @@ A Python library for connecting, monitoring, and capturing raw electrodermal act
 
 ### 1. Installation
 
+#### Option A: Core Library Install (Recommended for Library Use)
+To install the core BLE SDK with minimal dependencies (only `bleak` and `scipy`):
+```bash
+pip install nuanic-ring
+```
+
+#### Option B: Library with CLI & Tooling Install (Recommended for CLI Use)
+To install the package along with the interactive terminal dashboard, waveform viewer, and offline logs analysis tools (which pull in `rich`, `matplotlib`, `pandas`, and `numpy`):
+```bash
+pip install "nuanic-ring[cli]"
+```
+
+#### Option C: Local Developer Install
+For active development (editable install with all testing and CLI/tools dependencies):
 ```bash
 python -m venv .venv
 # Windows

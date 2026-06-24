@@ -7,19 +7,22 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from rich.console import Console, Group
-from rich.live import Live
-from rich.table import Table
-from rich.text import Text
-
 from nuanic_ring.connector import NuanicConnector
 from nuanic_ring.discover_services import run_diagnostics
 from nuanic_ring.monitor import NuanicMonitor
-from nuanic_ring.post_analysis import (
-    analyze_latest_ring_logs,
-    format_analysis_report,
-)
-from nuanic_ring.waveform_viewer import run_waveform_viewer
+
+
+def _check_dependency(module_name: str, extra: str = "cli") -> bool:
+    try:
+        __import__(module_name)
+        return True
+    except ImportError:
+        print(
+            f"Error: The '{module_name}' module is required for this command/option but is not installed.\n"
+            f"Please install it using: pip install nuanic-ring[{extra}]",
+            file=sys.stderr,
+        )
+        return False
 
 
 def _stdout_encoding_is_utf8() -> bool:
@@ -88,7 +91,9 @@ def _build_dashboard_table(
     elapsed_seconds: float,
     box_style: Any = None,
     marker_legend: str = "",
-) -> Table:
+) -> Any:
+    from rich.table import Table
+
     table = Table(
         title=f"Nuanic Multi-Ring Dashboard  |  Elapsed: {elapsed_seconds:.1f}s",
         box=box_style,
@@ -132,6 +137,9 @@ def _build_dashboard_renderable(
     box_style: Any = None,
     marker_legend: str = "",
 ) -> Any:
+    from rich.console import Group
+    from rich.text import Text
+
     table = _build_dashboard_table(
         rows,
         elapsed_seconds,
@@ -309,6 +317,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def ring_monitor() -> int:
     """Entry point for nuanic-ring-monitor command."""
+    if not _check_dependency("rich"):
+        return 1
     parser = build_parser()
     args = parser.parse_args()
     try:
@@ -319,6 +329,9 @@ def ring_monitor() -> int:
 
 
 async def _run_monitor_cli(args: argparse.Namespace) -> int:
+    from rich.console import Console
+    from rich.live import Live
+
     console = Console(force_terminal=True)
     box_style = None
     if sys.platform == "win32" and not _stdout_encoding_is_utf8():
@@ -371,6 +384,10 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         return 0
 
     if args.waveform:
+        if not _check_dependency("matplotlib") or not _check_dependency("numpy"):
+            return 1
+        from nuanic_ring.waveform_viewer import run_waveform_viewer
+
         return await run_waveform_viewer(
             ring_addr=args.ring_addr,
             window_seconds=args.window_seconds,
@@ -474,6 +491,13 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         await monitor.stop_multi()
 
     if args.post_analysis == "yes" and args.enable_logging:
+        if not _check_dependency("pandas") or not _check_dependency("numpy"):
+            return 1
+        from nuanic_ring.post_analysis import (
+            analyze_latest_ring_logs,
+            format_analysis_report,
+        )
+
         results = analyze_latest_ring_logs(log_dir=args.log_dir, latest_n=2)
         console.print(format_analysis_report(results))
     return 0
@@ -481,6 +505,8 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
 
 def ring_analyzer() -> int:
     """Entry point for nuanic-ring-analyzer command."""
+    if not _check_dependency("pandas") or not _check_dependency("numpy"):
+        return 1
     from nuanic_ring.data_analysis import print_export_fit_report, print_report
 
     parser = argparse.ArgumentParser(description="Analyze ring CSV log files")
@@ -507,6 +533,13 @@ def ring_analyzer() -> int:
 
 def ring_post_analysis() -> int:
     """Entry point for nuanic-ring-post-analysis command."""
+    if not _check_dependency("pandas") or not _check_dependency("numpy"):
+        return 1
+    from nuanic_ring.post_analysis import (
+        analyze_latest_ring_logs,
+        format_analysis_report,
+    )
+
     parser = argparse.ArgumentParser(description="Analyze latest ring CSV logs")
     parser.add_argument("--log-dir", default="data/ring_logs")
     parser.add_argument("--latest", type=int, default=2)
