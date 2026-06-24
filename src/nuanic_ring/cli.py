@@ -322,6 +322,20 @@ def ring_monitor() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
+        if args.waveform:
+            if not _check_dependency("matplotlib") or not _check_dependency("numpy"):
+                return 1
+            from nuanic_ring.waveform_viewer import run_waveform_viewer_sync
+
+            return run_waveform_viewer_sync(
+                ring_addr=args.ring_addr,
+                window_seconds=args.window_seconds,
+                refresh_ms=args.refresh_ms,
+                smooth_window=args.smooth,
+                target_hz=args.target_hz,
+                attempt_rate_control=(args.rate_control == "yes"),
+                raw_signal=args.raw,
+            )
         return asyncio.run(_run_monitor_cli(args))
     except KeyboardInterrupt:
         print("\n[INFO] Interrupted by user. Exiting...")
@@ -383,20 +397,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
             )
         return 0
 
-    if args.waveform:
-        if not _check_dependency("matplotlib") or not _check_dependency("numpy"):
-            return 1
-        from nuanic_ring.waveform_viewer import run_waveform_viewer
-
-        return await run_waveform_viewer(
-            ring_addr=args.ring_addr,
-            window_seconds=args.window_seconds,
-            refresh_ms=args.refresh_ms,
-            smooth_window=args.smooth,
-            target_hz=args.target_hz,
-            attempt_rate_control=(args.rate_control == "yes"),
-            raw_signal=args.raw,
-        )
+    # Waveform check is intercepted synchronously in ring_monitor() to avoid Matplotlib GUI thread issues
 
     monitor = NuanicMonitor(
         log_dir=args.log_dir,
