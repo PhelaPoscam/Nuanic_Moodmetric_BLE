@@ -451,3 +451,100 @@ async def run_waveform_viewer(
 
     print("[STOP] Waveform viewer stopped")
     return 0
+
+
+def run_waveform_viewer_sync(
+    ring_addr: str | None = None,
+    window_seconds: int = 10,
+    refresh_ms: int = 120,
+    smooth_window: int = 1,
+    calibration_seconds: int = 60,
+    target_hz: float | None = None,
+    attempt_rate_control: bool = False,
+    raw_signal: bool = False,
+) -> int:
+    """Run standalone live telemetry plotter using threads.
+
+    The Matplotlib GUI runs on the main thread, while the BLE subscriptions and
+    asyncio event loop run on a background daemon thread.
+    """
+    viewer = NuanicWaveformViewer(
+        ring_addr=ring_addr,
+        calibration_seconds=calibration_seconds,
+        target_hz=target_hz,
+        attempt_rate_control=attempt_rate_control,
+        raw_signal=raw_signal,
+    )
+
+    loop = asyncio.new_event_loop()
+    connection_success = threading.Event()
+    connection_failed = threading.Event()
+
+    async def async_worker():
+        try:
+            if not await viewer.connect_and_subscribe():
+                connection_failed.set()
+                return
+            connection_success.set()
+            await viewer.run_until_stopped()
+        except Exception as e:
+            print(f"[ERROR] Async worker exception: {e}")
+            connection_failed.set()
+        finally:
+            await viewer.stop()
+
+    def run_loop():
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(async_worker())
+        finally:
+            loop.close()
+
+    bg_thread = threading.Thread(target=run_loop, name="NuanicBLEWorker", daemon=True)
+    bg_thread.start()
+
+    print("[SCAN] Connecting and subscribing to streams in background...")
+    while not connection_success.is_set() and not connection_failed.is_set():
+        time.sleep(0.1)
+        if not bg_thread.is_alive():
+            break
+
+    if connection_failed.is_set() or not connection_success.is_set():
+        print(
+            "[FAIL] Could not connect and subscribe to high-frequency telemetry streams"
+        )
+        viewer._running = False
+        if loop.is_running():
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except Exception:
+                pass
+        bg_thread.join(timeout=2.0)
+        return 1
+
+    print("[OK] Connected. Opening live telemetry window on main thread...")
+    if smooth_window > 1:
+        print(f"[SMOOTH] Applying {smooth_window}-point moving average filter")
+
+    try:
+        _run_plot_blocking(
+            viewer,
+            window_seconds,
+            refresh_ms,
+            smooth_window,
+        )
+    except KeyboardInterrupt:
+        print("\n[STOP] Interrupted by user")
+    finally:
+        viewer._running = False
+        bg_thread.join(timeout=3.0)
+        if bg_thread.is_alive():
+            print("[WARN] Worker thread did not exit cleanly, forcing loop stop...")
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except Exception:
+                pass
+            bg_thread.join(timeout=1.0)
+
+    print("[STOP] Waveform viewer stopped")
+    return 0
