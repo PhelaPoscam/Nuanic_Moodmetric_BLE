@@ -26,14 +26,17 @@ jobs:
         pip install -e ".[dev]"
 
     - name: Check code formatting with Black
+      if: matrix.python-version == '3.12'
       run: |
         black --check .
 
     - name: Check import sorting with isort
+      if: matrix.python-version == '3.12'
       run: |
         isort --check-only --diff .
 
     - name: Static type checking with mypy
+      if: matrix.python-version == '3.12'
       run: |
         mypy src/nuanic_ring
 
