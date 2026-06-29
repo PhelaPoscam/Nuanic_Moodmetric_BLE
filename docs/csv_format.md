@@ -171,12 +171,14 @@ col_map = {
 ```python
 import pandas as pd
 
-# Load the file
-df = pd.read_csv("data/ring_logs/SessionDate_08-06-2026_10-54-28_ring-72F207.csv")
+# 1. Load the Computed Physiology Data (for derived metrics like Skin Conductance)
+computed_df = pd.read_csv("data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs/ring-72F207_computed.csv")
+eda_df = computed_df[computed_df["data_type"] == "D306_EDA"].dropna(subset=["Skin_Conductance_uS"])
 
-# Filter for physiological samples
-eda_df = df[df["data_type"] == "D306_EDA"].dropna(subset=["Skin_Conductance_uS"])
+# 2. Load the Raw Stream Data (for raw hardware values or markers)
+stream_df = pd.read_csv("data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs/ring-72F207.csv")
+markers_df = stream_df[stream_df["data_type"] == "MARKER"]
 
-# Filter for manual event markers
-markers_df = df[df["data_type"] == "MARKER"]
+# 3. Load the IMU Data
+imu_df = pd.read_csv("data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs/ring-72F207_imu.csv")
 ```
