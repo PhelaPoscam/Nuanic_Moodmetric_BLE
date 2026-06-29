@@ -47,7 +47,7 @@ nuanic-ring-monitor --calibration-seconds 60
 nuanic-ring-monitor --waveform
 
 # Run post-session analysis on a log
-nuanic-ring-analyzer data/ring_logs/my_session.csv
+nuanic-ring-analyzer data/ring_logs/SessionDate_YYYY-MM-DD_HH-MM-SS/csvs/ring--MAC.csv
 ```
 
 ---
