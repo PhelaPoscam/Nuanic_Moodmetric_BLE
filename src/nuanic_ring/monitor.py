@@ -316,11 +316,6 @@ class NuanicMonitor:
             "data_type",
             "EDA_Raw_Value",
             "Stress_Index",
-            "MM_Filtered_uS",
-            "MM_Arousal_Score",
-            "MM_Calibrated",
-            "Skin_Resistance_kOhm",
-            "Skin_Conductance_uS",
             "D306_Clock",
             "D306_Context",
             "State_Code",
@@ -622,11 +617,6 @@ class NuanicMonitor:
             "",
             "",
             "",
-            "",
-            "",
-            "",
-            "",
-            "",
             marker_payload,
         ]
 
@@ -757,11 +747,6 @@ class NuanicMonitor:
                     + [
                         eda_value,
                         dne_stress_index,
-                        f"{filtered_us:.4f}",
-                        f"{state.arousal_score:.2f}",
-                        "1" if score_state["calibrated"] else "0",
-                        f"{resistance_kohm:.4f}",
-                        f"{conductance_us:.4f}",
                         clock,
                         context,
                         data.hex(),
@@ -883,11 +868,6 @@ class NuanicMonitor:
                     + [
                         "",  # 5: EDA_Raw_Value
                         "",  # 6: Stress_Index
-                        "",  # 7: MM_Filtered_uS
-                        "",  # 8: MM_Arousal_Score
-                        "",  # 9: MM_Calibrated
-                        "",  # 10: Skin_Resistance_kOhm
-                        "",  # 11: Skin_Conductance_uS
                         "",  # 12: D306_Clock
                         "",  # 13: D306_Context
                         state_code if state_code is not None else "",  # 14: State_Code
@@ -933,11 +913,6 @@ class NuanicMonitor:
                     + [
                         "",  # 5: EDA_Raw_Value
                         "",  # 6: Stress_Index
-                        "",  # 7: MM_Filtered_uS
-                        "",  # 8: MM_Arousal_Score
-                        "",  # 9: MM_Calibrated
-                        "",  # 10: Skin_Resistance_kOhm
-                        "",  # 11: Skin_Conductance_uS
                         "",  # 12: D306_Clock
                         "",  # 13: D306_Context
                         "",  # 14: State_Code

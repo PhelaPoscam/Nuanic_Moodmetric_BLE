@@ -48,7 +48,7 @@ def test_split_csv_rows_keep_streamed_and_computed_shapes():
     assert len(imu_data_rows) == 14
     assert all(len(row) == 15 for row in stream_rows)
     assert all(len(row) == 22 for row in computed_rows)
-    assert all(len(row) == 24 for row in combined_rows)
+    assert all(len(row) == 19 for row in combined_rows)
     assert all(len(row) == 9 for row in imu_rows)
     # All 14 unrolled rows share the same timestamp
     imu_timestamps = {row[0] for row in imu_data_rows}
