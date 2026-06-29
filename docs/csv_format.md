@@ -56,6 +56,61 @@ The main streaming CSV contains a fixed set of **19 columns**. Because the ring 
 
 ---
 
+## 📋 Streamed CSV Column Reference (`..._streamed.csv`)
+
+When using `--csv-layout split` or `both`, the streamed CSV contains **15 columns** of raw ring-native fields.
+
+| # | Column Name | Data Type | Description |
+| :--- | :--- | :--- | :--- |
+| 0 | `timestamp` | ISO8601 String | High-resolution local ISO timestamp. |
+| 1 | `elapsed_ms` | Integer | Milliseconds elapsed since the monitoring session started. |
+| 2 | `device_mac` | MAC String | Upper-case MAC address of the source ring. |
+| 3 | `connection_state` | String | Current BLE connection state. |
+| 4 | `data_type` | Enum String | `D306_EDA`, `STATE_3C18`, `LIVE_EDA_42DC`, or `MARKER`. |
+| 5 | `D306_Clock` | Integer | Monotonic firmware clock counter from the physiological stream. |
+| 6 | `D306_Context` | Integer | Monotonic context identifier from the physiological stream. |
+| 7 | `EDA_Raw_Value` | Integer | Raw ADC output value representing skin impedance. |
+| 8 | `Stress_Index` | Integer | Proprietary on-ring computed stress indicator (0–100). |
+| 9 | `State_Code` | Integer | Off-finger / on-finger state indicator code. |
+| 10 | `payload_hex` | Hex String | Hex-encoded raw BLE payload. |
+| 11 | `full_packet_hex` | Hex String | Full hex-encoded BLE notification packet. |
+| 12 | `decoded_fields` | JSON String | JSON-serialized dynamic metadata. |
+| 13 | `marker_label` | String | Marker label (populated only for `MARKER` rows). |
+| 14 | `marker_source` | String | Marker trigger origin (populated only for `MARKER` rows). |
+
+---
+
+## 📋 Computed CSV Column Reference (`..._computed.csv`)
+
+When using `--csv-layout split` or `both`, the computed CSV contains **22 columns** with locally derived physiology and motion metrics.
+
+| # | Column Name | Data Type | Description |
+| :--- | :--- | :--- | :--- |
+| 0 | `timestamp` | ISO8601 String | High-resolution local ISO timestamp. |
+| 1 | `elapsed_ms` | Integer | Milliseconds elapsed since the monitoring session started. |
+| 2 | `device_mac` | MAC String | Upper-case MAC address of the source ring. |
+| 3 | `connection_state` | String | Current BLE connection state. |
+| 4 | `data_type` | Enum String | `D306_EDA_COMPUTED` or `MARKER`. |
+| 5 | `Source_D306_Clock` | Integer | Hardware clock from the source EDA packet for alignment. |
+| 6 | `Source_D306_Context` | Integer | Context identifier from the source EDA packet. |
+| 7 | `Skin_Resistance_kOhm` | Float | Computed raw skin resistance in Kilo-Ohms. |
+| 8 | `Skin_Conductance_uS` | Float | Computed raw skin conductance in Microsiemens. |
+| 9 | `MM_Filtered_uS` | Float | Skin Conductance after low-pass filtering. |
+| 10 | `SCR_Frequency_Per_Min` | Float | Skin Conductance Response peak frequency. |
+| 11 | `SCR_Amplitude` | Float | Skin Conductance Response amplitude. |
+| 12 | `MM_Arousal_Score` | Float | Moodmetric-like arousal score (1–100). |
+| 13 | `MM_Calibrated` | Binary (0/1) | Whether personal baseline calibration is complete. |
+| 14 | `D306_Observed_Hz` | Float | Real-time measured frequency of the physiological stream. |
+| 15 | `IMU_Observed_Hz` | Float | Real-time measured frequency of the IMU stream. |
+| 16 | `Rate_Target_Hz` | Float | Requested target sampling rate for the session. |
+| 17 | `Rate_Control_Status` | String | Status of sample rate negotiation. |
+| 18 | `Equalize_Mode` | String | Configured rate-limiting mode. |
+| 19 | `Equalize_WouldDrop` | Binary (0/1) | Would-drop indicator for rate-limiting. |
+| 20 | `marker_label` | String | Marker label (populated only for `MARKER` rows). |
+| 21 | `marker_source` | String | Marker trigger origin (populated only for `MARKER` rows). |
+
+---
+
 ## 🔄 Record Types & Column Population
 
 Since data streams are asynchronous, the unified CSV (combined/split) is sparse. Below is the mapping of which columns are populated for each `data_type` value. All unlisted columns for a given type are written as empty strings (`""`).
@@ -69,7 +124,7 @@ This is the primary physiological stream (~16 Hz). It provides raw skin impedanc
   * Base columns: `timestamp`, `elapsed_ms`, `device_mac`, `connection_state`, `data_type`
   * Primary data: `EDA_Raw_Value`, `Stress_Index`
   * Hardware headers: `D306_Clock`, `D306_Context`
-  * Raw packet: `payload_hex` (contains the raw 16-byte D306 packet)
+  * Raw packet: `payload_hex`, `full_packet_hex` (both contain the raw 16-byte D306 packet)
   * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop`
 
 ### 2. Computed Physiology CSV (`..._computed.csv`)
@@ -81,7 +136,8 @@ This file is generated automatically alongside the streaming file if you use `--
   * Source matching: `Source_D306_Clock`, `Source_D306_Context` (Matches the hardware clock from the streamed EDA packet to perfectly align raw data with computed data).
   * Derived EDA: `Skin_Resistance_kOhm`, `Skin_Conductance_uS`, `MM_Filtered_uS`
   * Arousal Metrics: `SCR_Frequency_Per_Min`, `SCR_Amplitude`, `MM_Arousal_Score`, `MM_Calibrated`
-  * Diagnostics: `D306_Observed_Hz`, `Rate_Control_Status`, `Equalize_WouldDrop`
+  * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop`
+  * Markers: `marker_label`, `marker_source` (populated only for `MARKER` rows)
 
 ### 3. Dedicated IMU CSV (`..._imu.csv`)
 This is the accelerometer stream (~1 Hz). It provides a batch of 14 samples of X, Y, Z acceleration data per packet to conserve BLE bandwidth.
@@ -97,7 +153,7 @@ This data is now unrolled and logged into its own dedicated file.
   * `x`, `y`, `z`: Individual accelerometer coordinates (raw `int16`).
   * `marker`: JSON-encoded marker payload for event annotations (empty for IMU data rows).
 
-### 3. `STATE_3C18`
+### 4. `STATE_3C18`
 This stream indicates whether the ring is worn on the finger. It is sent whenever the contact status transitions.
 
 * **Populated columns:**
@@ -106,7 +162,7 @@ This stream indicates whether the ring is worn on the finger. It is sent wheneve
   * Raw packet: `payload_hex` (1-byte state), `full_packet_hex` (1-byte state)
   * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop` (with `Equalize_WouldDrop` = `0`)
 
-### 4. `LIVE_EDA_42DC`
+### 5. `LIVE_EDA_42DC`
 A notification channel that fires occasionally but carries no structured physiological payload.
 
 * **Populated columns:**
@@ -115,13 +171,18 @@ A notification channel that fires occasionally but carries no structured physiol
   * Metadata: `decoded_fields` (contains JSON string representing the length of the packet, e.g. `{"len": 2}`)
   * Diagnostics: standard rate tail.
 
-### 5. `MARKER`
+### 6. `MARKER`
 Event annotations injected dynamically during a session. Markers are triggered by pressing keybinds (e.g. `SPACE`, `S`, `B`, `R`) or using the TUI console command `/m <label>`.
 
-* **Populated columns:**
+* **Populated columns (combined CSV):**
   * Base columns: `timestamp`, `elapsed_ms`, `device_mac`, `connection_state`, `data_type`
   * Annotation payload: `decoded_fields` (contains JSON string describing the marker label and trigger source, e.g. `{"label": "baseline_start", "source": "manual"}`)
   * Diagnostics: standard rate tail (with `Equalize_WouldDrop` = `0`).
+
+* **Populated columns (streamed & computed CSVs):**
+  * Base columns: same as above.
+  * Annotation: `marker_label` (human-readable label), `marker_source` (trigger origin, e.g. `manual`).
+  * Diagnostics: standard rate tail (computed CSV only).
 
 ---
 
@@ -168,17 +229,35 @@ col_map = {
 
 ### Loading the Data in Python
 
+Choose the files that match your `--csv-layout` setting:
+
 ```python
 import pandas as pd
 
-# 1. Load the Computed Physiology Data (for derived metrics like Skin Conductance)
-computed_df = pd.read_csv("data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs/ring-72F207_computed.csv")
-eda_df = computed_df[computed_df["data_type"] == "D306_EDA"].dropna(subset=["Skin_Conductance_uS"])
+SESSION = "data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs"
 
-# 2. Load the Raw Stream Data (for raw hardware values or markers)
-stream_df = pd.read_csv("data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs/ring-72F207.csv")
+# --- With --csv-layout split or both ---
+
+# Physiology (derived metrics: skin conductance, arousal)
+computed_df = pd.read_csv(f"{SESSION}/ring-72F207_computed.csv")
+eda_df = computed_df[computed_df["data_type"] == "D306_EDA_COMPUTED"]
+
+# Raw stream (hardware values, markers)
+stream_df = pd.read_csv(f"{SESSION}/ring-72F207_streamed.csv")
 markers_df = stream_df[stream_df["data_type"] == "MARKER"]
 
-# 3. Load the IMU Data
-imu_df = pd.read_csv("data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs/ring-72F207_imu.csv")
+# --- With --csv-layout combined ---
+
+# Single mixed file (raw hardware + rate diagnostics; no computed physiology)
+combined_df = pd.read_csv(f"{SESSION}/ring-72F207.csv")
+eda_rows = combined_df[combined_df["data_type"] == "D306_EDA"]
+
+# --- Always available ---
+
+# IMU (accelerometer data, unrolled 14 rows per batch)
+imu_df = pd.read_csv(f"{SESSION}/ring-72F207_imu.csv")
+
+# Align IMU with EDA via elapsed_ms
+eda_for_merge = eda_df[["elapsed_ms", "MM_Arousal_Score"]]
+imu_aligned = imu_df.merge(eda_for_merge, on="elapsed_ms", how="left")
 ```
