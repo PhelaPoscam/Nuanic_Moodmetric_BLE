@@ -30,7 +30,7 @@ The monitor supports three CSV layouts:
 
 ## 📋 Column Reference Table
 
-The legacy combined CSV contains a fixed set of **30 columns**. Because the ring streams telemetry from multiple sensors asynchronously, the file uses a **mixed-row format** where columns are selectively populated depending on the row's `data_type`.
+The main streaming CSV contains a fixed set of **19 columns**. Because the ring streams telemetry from multiple sensors asynchronously, the file uses a **mixed-row format** where columns are selectively populated depending on the row's `data_type`.
 
 | # | Column Name | Data Type | Description |
 | :--- | :--- | :--- | :--- |
@@ -38,32 +38,21 @@ The legacy combined CSV contains a fixed set of **30 columns**. Because the ring
 | 1 | `elapsed_ms` | Integer | Milliseconds elapsed since the monitoring session started. |
 | 2 | `device_mac` | MAC String | Upper-case MAC address of the source ring. |
 | 3 | `connection_state` | String | Current BLE connection state (e.g., `connected`, `connecting`, `disconnected`, `degraded`). |
-| 4 | `data_type` | Enum String | The telemetry channel of this row: `D306_EDA`, `IMU_BATCH_468F`, `STATE_3C18`, `LIVE_EDA_42DC`, or `MARKER`. |
+| 4 | `data_type` | Enum String | The telemetry channel of this row: `D306_EDA`, `STATE_3C18`, `LIVE_EDA_42DC`, or `MARKER`. |
 | 5 | `EDA_Raw_Value` | Integer | Raw ADC output value representing skin impedance (16-bit or 32-bit unsigned). |
 | 6 | `Stress_Index` | Integer | Proprietary on-ring computed stress indicator (0–100). |
-| 7 | `MM_Filtered_uS` | Float | Skin Conductance (SC) in Microsiemens ($\mu S$) after applying the signal conditioning low-pass filter. |
-| 8 | `MM_Arousal_Score` | Float | Moodmetric-like arousal score scaled from 1 to 100 based on personal min/max calibration. |
-| 9 | `MM_Calibrated` | Binary (0/1) | Indicates if the personal min/max baseline calibration window has finished (`1` = calibrated, `0` = calibrating). |
-| 10 | `Skin_Resistance_kOhm` | Float | Computed raw skin resistance in Kilo-Ohms ($k\Omega$). |
-| 11 | `Skin_Conductance_uS` | Float | Computed raw skin conductance in Microsiemens ($\mu S$). |
-| 12 | `D306_Clock` | Integer | Monotonic firmware clock counter from the physiological stream. |
-| 13 | `D306_Context` | Integer | Monotonic context identifier (session/warmup count) from the physiological stream. |
-| 14 | `IMU_Batch_Clock` | Integer | Monotonic firmware clock counter from the IMU stream. |
-| 15 | `IMU_Batch_Context` | Integer | Monotonic context identifier from the IMU stream. |
-| 16 | `IMU_X0` | Integer | Accelerometer X value (raw `int16`) of the first sample in the IMU batch. |
-| 17 | `IMU_Y0` | Integer | Accelerometer Y value (raw `int16`) of the first sample in the IMU batch. |
-| 18 | `IMU_Z0` | Integer | Accelerometer Z value (raw `int16`) of the first sample in the IMU batch. |
-| 19 | `IMU_Motion_Intensity` | Float | Average magnitude (g-like) of all 14 accelerometer samples in the batch. |
-| 20 | `State_Code` | Integer | Off-finger / on-finger state indicator code (`1` = off-finger, `2` = on-finger, `3` = transient/poll). |
-| 21 | `payload_hex` | Hex String | Hex-encoded raw BLE payload (excludes clock/context headers for IMU). |
-| 22 | `full_packet_hex` | Hex String | Full hex-encoded BLE notification packet received from the ring. |
-| 23 | `decoded_fields` | JSON String | JSON-serialized dictionary containing dynamically decoded fields or metadata. |
-| 24 | `D306_Observed_Hz` | Float | Real-time measured frequency (Hz) of the physiological stream. |
-| 25 | `IMU_Observed_Hz` | Float | Real-time measured frequency (Hz) of the IMU stream. |
-| 26 | `Rate_Target_Hz` | Float | The requested target sampling rate configured for this session. |
-| 27 | `Rate_Control_Status` | String | Status of sample rate negotiation (`success`, `failed`, `not-attempted`, etc.). |
-| 28 | `Equalize_Mode` | String | Configured rate-limiting mode (`off`, `log-only`, `enforce`). |
-| 29 | `Equalize_WouldDrop` | Binary (0/1) | If rate-limiting is set to `log-only`, `1` indicates this sample exceeds the target Hz limit and would be discarded. |
+| 7 | `D306_Clock` | Integer | Monotonic firmware clock counter from the physiological stream. |
+| 8 | `D306_Context` | Integer | Monotonic context identifier (session/warmup count) from the physiological stream. |
+| 9 | `State_Code` | Integer | Off-finger / on-finger state indicator code (`1` = off-finger, `2` = on-finger, `3` = transient/poll). |
+| 10 | `payload_hex` | Hex String | Hex-encoded raw BLE payload. |
+| 11 | `full_packet_hex` | Hex String | Full hex-encoded BLE notification packet received from the ring. |
+| 12 | `decoded_fields` | JSON String | JSON-serialized dictionary containing dynamically decoded fields or metadata. |
+| 13 | `D306_Observed_Hz` | Float | Real-time measured frequency (Hz) of the physiological stream. |
+| 14 | `IMU_Observed_Hz` | Float | Real-time measured frequency (Hz) of the IMU stream. |
+| 15 | `Rate_Target_Hz` | Float | The requested target sampling rate configured for this session. |
+| 16 | `Rate_Control_Status` | String | Status of sample rate negotiation (`success`, `failed`, `not-attempted`, etc.). |
+| 17 | `Equalize_Mode` | String | Configured rate-limiting mode (`off`, `log-only`, `enforce`). |
+| 18 | `Equalize_WouldDrop` | Binary (0/1) | If rate-limiting is set to `log-only`, `1` indicates this sample exceeds the target Hz limit and would be discarded. |
 
 ---
 
@@ -71,19 +60,30 @@ The legacy combined CSV contains a fixed set of **30 columns**. Because the ring
 
 Since data streams are asynchronous, the unified CSV (combined/split) is sparse. Below is the mapping of which columns are populated for each `data_type` value. All unlisted columns for a given type are written as empty strings (`""`).
 
-> **Note:** The IMU and Computed physiological data have been moved to their own dedicated CSV files (_imu.csv and _computed.csv). The streamed data only contains raw fields from the ring.
+> **Note:** The IMU and Computed physiological data have been moved to their own dedicated CSV files (`_imu.csv` and `_computed.csv`). The streamed data only contains raw fields from the ring.
 
-### 1. D306_EDA
+### 1. `D306_EDA`
 This is the primary physiological stream (~16 Hz). It provides raw skin impedance and the ring's proprietary stress index.
 
 * **Populated columns:**
-  * Base columns: 	imestamp, elapsed_ms, device_mac, connection_state, data_type
-  * Primary data: EDA_Raw_Value, Stress_Index
-  * Hardware headers: D306_Clock, D306_Context
-  * Raw packet: payload_hex (contains the raw 16-byte D306 packet)
-  * Diagnostics: D306_Observed_Hz, IMU_Observed_Hz, Rate_Target_Hz, Rate_Control_Status, Equalize_Mode, Equalize_WouldDrop`
+  * Base columns: `timestamp`, `elapsed_ms`, `device_mac`, `connection_state`, `data_type`
+  * Primary data: `EDA_Raw_Value`, `Stress_Index`
+  * Hardware headers: `D306_Clock`, `D306_Context`
+  * Raw packet: `payload_hex` (contains the raw 16-byte D306 packet)
+  * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop`
 
-### 2. Dedicated IMU CSV (`..._imu.csv`)
+### 2. Computed Physiology CSV (`..._computed.csv`)
+This file is generated automatically alongside the streaming file if you use `--csv-layout split` or `both`. It contains the offline physiological calculations, derived metrics, and the arousal score.
+
+* **File Pattern:** `<log_dir>/SessionDate_DD-MM-YYYY_HH-MM-SS/csvs/[ParticipantID_]ring-<Last6MAC>_computed.csv`
+* **Columns:**
+  * Base columns: `timestamp`, `elapsed_ms`, `device_mac`, `connection_state`, `data_type`
+  * Source matching: `Source_D306_Clock`, `Source_D306_Context` (Matches the hardware clock from the streamed EDA packet to perfectly align raw data with computed data).
+  * Derived EDA: `Skin_Resistance_kOhm`, `Skin_Conductance_uS`, `MM_Filtered_uS`
+  * Arousal Metrics: `SCR_Frequency_Per_Min`, `SCR_Amplitude`, `MM_Arousal_Score`, `MM_Calibrated`
+  * Diagnostics: `D306_Observed_Hz`, `Rate_Control_Status`, `Equalize_WouldDrop`
+
+### 3. Dedicated IMU CSV (`..._imu.csv`)
 This is the accelerometer stream (~1 Hz). It provides a batch of 14 samples of X, Y, Z acceleration data per packet to conserve BLE bandwidth.
 This data is now unrolled and logged into its own dedicated file.
 
