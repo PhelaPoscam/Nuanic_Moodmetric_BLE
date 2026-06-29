@@ -71,18 +71,17 @@ The legacy combined CSV contains a fixed set of **30 columns**. Because the ring
 
 Since data streams are asynchronous, the unified CSV (combined/split) is sparse. Below is the mapping of which columns are populated for each `data_type` value. All unlisted columns for a given type are written as empty strings (`""`).
 
-> **Note:** IMU columns (`IMU_Batch_Clock`, `IMU_Batch_Context`, `IMU_X0`, `IMU_Y0`, `IMU_Z0`, `IMU_Motion_Intensity`) remain in the combined/streamed headers for legacy compatibility but are now **always empty**. IMU data has been moved to its own dedicated file.
+> **Note:** The IMU and Computed physiological data have been moved to their own dedicated CSV files (_imu.csv and _computed.csv). The streamed data only contains raw fields from the ring.
 
-### 1. `D306_EDA`
-This is the primary physiological stream (~16 Hz). It provides raw skin impedance and the ring's proprietary stress index, alongside the SDK's computed arousal metrics.
+### 1. D306_EDA
+This is the primary physiological stream (~16 Hz). It provides raw skin impedance and the ring's proprietary stress index.
 
 * **Populated columns:**
-  * Base columns: `timestamp`, `elapsed_ms`, `device_mac`, `connection_state`, `data_type`
-  * Primary data: `EDA_Raw_Value`, `Stress_Index`
-  * Derived metrics: `Skin_Resistance_kOhm`, `Skin_Conductance_uS`, `MM_Filtered_uS`, `MM_Arousal_Score`, `MM_Calibrated`
-  * Hardware headers: `D306_Clock`, `D306_Context`
-  * Raw packet: `payload_hex` (contains the raw 16-byte D306 packet)
-  * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop`
+  * Base columns: 	imestamp, elapsed_ms, device_mac, connection_state, data_type
+  * Primary data: EDA_Raw_Value, Stress_Index
+  * Hardware headers: D306_Clock, D306_Context
+  * Raw packet: payload_hex (contains the raw 16-byte D306 packet)
+  * Diagnostics: D306_Observed_Hz, IMU_Observed_Hz, Rate_Target_Hz, Rate_Control_Status, Equalize_Mode, Equalize_WouldDrop`
 
 ### 2. Dedicated IMU CSV (`..._imu.csv`)
 This is the accelerometer stream (~1 Hz). It provides a batch of 14 samples of X, Y, Z acceleration data per packet to conserve BLE bandwidth.
