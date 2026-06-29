@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import platform
+import statistics
 import struct
 from collections import deque
 from dataclasses import dataclass, field
@@ -64,6 +65,9 @@ class RingDeviceState:
     computed_log_queue: Optional[asyncio.Queue[List[Any]]] = None
     stream_writer_task: Optional[asyncio.Task[None]] = None
     computed_writer_task: Optional[asyncio.Task[None]] = None
+    imu_log_file: Optional[Path] = None
+    imu_log_queue: Optional[asyncio.Queue[List[Any]]] = None
+    imu_writer_task: Optional[asyncio.Task[None]] = None
     dropped_rows: int = 0
     marker_count: int = 0
 
@@ -138,6 +142,8 @@ class NuanicMonitor:
         self.warmup_delay = warmup_delay
         self.allow_reset_bt = allow_reset_bt
         self.raw_signal = raw_signal
+
+        self.session_timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
 
         self.start_time: Optional[datetime] = None
         self.running = False
@@ -222,7 +228,10 @@ class NuanicMonitor:
             offset += 6
 
         magnitudes = [math.sqrt((x * x) + (y * y) + (z * z)) for x, y, z in samples]
-        motion_intensity = sum(magnitudes) / len(magnitudes)
+        if len(magnitudes) > 1:
+            motion_intensity = statistics.stdev(magnitudes)
+        else:
+            motion_intensity = 0.0
 
         return {
             "clock": clock,
@@ -252,14 +261,14 @@ class NuanicMonitor:
             if self.csv_layout in {"split", "both"}:
                 state.stream_log_queue = asyncio.Queue(maxsize=5000)
                 state.computed_log_queue = asyncio.Queue(maxsize=5000)
+            state.imu_log_queue = asyncio.Queue(maxsize=5000)
             # writer_task will be created lazily in _initialize_log_file
 
         return state
 
     def _log_filename(self, state: RingDeviceState, suffix: str = "") -> str:
-        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
         safe_mac = state.mac.replace(":", "-")
-        parts = ["SessionDate", timestamp]
+        parts = []
         if self.participant_id:
             parts.append(self.participant_id)
         parts.append(f"ring-{safe_mac[-6:]}")
@@ -279,7 +288,9 @@ class NuanicMonitor:
         if not self.enable_logging or getattr(state, file_attr):
             return
         filename = self._log_filename(state, suffix)
-        file_path = self.log_dir / filename
+        session_folder = self.log_dir / f"SessionDate_{self.session_timestamp}" / "csvs"
+        session_folder.mkdir(parents=True, exist_ok=True)
+        file_path = session_folder / filename
         setattr(state, file_attr, file_path)
         try:
             with open(file_path, "w", newline="", encoding="utf-8") as f:
@@ -290,9 +301,9 @@ class NuanicMonitor:
                     self._csv_writer_loop(state, queue, file_path)
                 )
                 setattr(state, task_attr, task)
-            print(f"[LOG] Started log for {state.mac}: {filename}")
+            _log.info("Started log for %s: %s", state.mac, filename)
         except Exception as e:
-            print(f"[LOG] Error initializing log for {state.mac}: {e}")
+            _log.error("Error initializing log for %s: %s", state.mac, e)
             setattr(state, file_attr, None)
 
     def _initialize_log_file(self, state: RingDeviceState) -> None:
@@ -312,12 +323,6 @@ class NuanicMonitor:
             "Skin_Conductance_uS",
             "D306_Clock",
             "D306_Context",
-            "IMU_Batch_Clock",
-            "IMU_Batch_Context",
-            "IMU_X0",
-            "IMU_Y0",
-            "IMU_Z0",
-            "IMU_Motion_Intensity",
             "State_Code",
             "payload_hex",
             "full_packet_hex",
@@ -345,13 +350,6 @@ class NuanicMonitor:
             "D306_Context",
             "EDA_Raw_Value",
             "Stress_Index",
-            "IMU_Batch_Clock",
-            "IMU_Batch_Context",
-            "IMU_Sample_Count",
-            "IMU_Samples_XYZ",
-            "IMU_X0",
-            "IMU_Y0",
-            "IMU_Z0",
             "State_Code",
             "payload_hex",
             "full_packet_hex",
@@ -367,8 +365,6 @@ class NuanicMonitor:
             "data_type",
             "Source_D306_Clock",
             "Source_D306_Context",
-            "Source_IMU_Batch_Clock",
-            "Source_IMU_Batch_Context",
             "Skin_Resistance_kOhm",
             "Skin_Conductance_uS",
             "MM_Filtered_uS",
@@ -376,7 +372,6 @@ class NuanicMonitor:
             "SCR_Amplitude",
             "MM_Arousal_Score",
             "MM_Calibrated",
-            "IMU_Motion_Intensity",
             "D306_Observed_Hz",
             "IMU_Observed_Hz",
             "Rate_Target_Hz",
@@ -401,6 +396,28 @@ class NuanicMonitor:
             "computed_log_file",
             "computed_log_queue",
             "computed_writer_task",
+        )
+
+    def _initialize_imu_log_file(self, state: RingDeviceState) -> None:
+        """Lazily initialize the dedicated IMU CSV file."""
+        header = [
+            "timestamp",
+            "elapsed_ms",
+            "clock",
+            "context",
+            "motion_intensity",
+            "x",
+            "y",
+            "z",
+            "marker",
+        ]
+        self._initialize_single_log(
+            state,
+            "imu",
+            header,
+            "imu_log_file",
+            "imu_log_queue",
+            "imu_writer_task",
         )
 
     async def _csv_writer_loop(
@@ -474,6 +491,18 @@ class NuanicMonitor:
 
         try:
             state.computed_log_queue.put_nowait(row)
+        except asyncio.QueueFull:
+            state.dropped_rows += 1
+
+    def _enqueue_imu_log(self, state: RingDeviceState, row: List[Any]) -> None:
+        if not self.enable_logging or not state.imu_log_queue:
+            return
+
+        if not state.imu_log_file:
+            self._initialize_imu_log_file(state)
+
+        try:
+            state.imu_log_queue.put_nowait(row)
         except asyncio.QueueFull:
             state.dropped_rows += 1
 
@@ -598,12 +627,6 @@ class NuanicMonitor:
             "",
             "",
             "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
             marker_payload,
         ]
 
@@ -617,13 +640,6 @@ class NuanicMonitor:
             self._enqueue_log(state, row)
 
             stream_row = self._base_row(state, "MARKER") + [
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
                 "",
                 "",
                 "",
@@ -651,14 +667,25 @@ class NuanicMonitor:
                 "",
                 "",
                 "",
-                "",
-                "",
-                "",
                 clean_label,
                 source,
             ]
             self._enqueue_stream_log(state, stream_row)
             self._enqueue_computed_log(state, computed_row)
+
+            imu_marker_row = [
+                datetime.now().isoformat(timespec="milliseconds"),
+                int(self._elapsed_seconds() * 1000),
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                marker_payload,
+            ]
+            self._enqueue_imu_log(state, imu_marker_row)
+
             state.marker_count += 1
             inserted += 1
 
@@ -737,13 +764,7 @@ class NuanicMonitor:
                         f"{conductance_us:.4f}",
                         clock,
                         context,
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
+                        data.hex(),
                         data.hex(),
                         "",
                         "",
@@ -758,13 +779,6 @@ class NuanicMonitor:
                     eda_value,
                     dne_stress_index,
                     "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
                     data.hex(),
                     data.hex(),
                     "",
@@ -776,8 +790,6 @@ class NuanicMonitor:
                     + [
                         clock,
                         context,
-                        "",
-                        "",
                         f"{resistance_kohm:.4f}",
                         f"{conductance_us:.4f}",
                         f"{filtered_us:.4f}",
@@ -785,7 +797,6 @@ class NuanicMonitor:
                         f"{amp:.4f}",
                         f"{state.arousal_score:.2f}",
                         "1" if score_state["calibrated"] else "0",
-                        "",
                     ]
                     + self._row_rate_tail(state, would_drop)
                     + [
@@ -834,82 +845,22 @@ class NuanicMonitor:
                 smoothed_ts, elapsed_ms = self._get_smoothed_time(
                     state, "imu", parsed_batch["clock"]
                 )
-                _row_kw: Dict[str, Any] = {
-                    "custom_ts": smoothed_ts,
-                    "custom_elapsed": elapsed_ms,
-                }
 
-                row = (
-                    self._base_row(state, "IMU_BATCH_468F", **_row_kw)
-                    + [
-                        "",  # 5: EDA_Raw_Value
-                        "",  # 6: Stress_Index
-                        "",  # 7: MM_Filtered_uS
-                        "",  # 8: MM_Arousal_Score
-                        "",  # 9: MM_Calibrated
-                        "",  # 10: Skin_Resistance_kOhm
-                        "",  # 11: Skin_Conductance_uS
-                        "",  # 12: D306_Clock
-                        "",  # 13: D306_Context
-                        parsed_batch["clock"],  # 14: IMU_Batch_Clock
-                        parsed_batch["context"],  # 15: IMU_Batch_Context
-                        parsed_batch["first_x"],  # 16: IMU_X0
-                        parsed_batch["first_y"],  # 17: IMU_Y0
-                        parsed_batch["first_z"],  # 18: IMU_Z0
-                        f"{parsed_batch['motion_intensity']:.2f}",  # 19: IMU_Motion_Intensity
-                        "",  # 20: State_Code
-                        data[8:].hex(),  # 21: payload_hex
-                        data.hex(),  # 22: full_packet_hex
-                        "",  # 23: decoded_fields
-                    ]
-                    + self._row_rate_tail(state, would_drop)
-                )
-                self._enqueue_log(state, row)
-
-                imu_samples_json = json.dumps(parsed_batch["samples"])
-                stream_row = self._base_row(state, "IMU_BATCH_468F", **_row_kw) + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    parsed_batch["clock"],
-                    parsed_batch["context"],
-                    len(parsed_batch["samples"]),
-                    imu_samples_json,
-                    parsed_batch["first_x"],
-                    parsed_batch["first_y"],
-                    parsed_batch["first_z"],
-                    "",
-                    data[8:].hex(),
-                    data.hex(),
-                    "",
-                    "",
-                    "",
-                ]
-                computed_row = (
-                    self._base_row(state, "IMU_BATCH_468F_COMPUTED", **_row_kw)
-                    + [
-                        "",
-                        "",
+                timestamp_iso = smoothed_ts.isoformat(timespec="milliseconds")
+                for x, y, z in parsed_batch["samples"]:
+                    imu_row = [
+                        timestamp_iso,
+                        elapsed_ms,
                         parsed_batch["clock"],
                         parsed_batch["context"],
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        f"{parsed_batch['motion_intensity']:.2f}",
-                    ]
-                    + self._row_rate_tail(state, would_drop)
-                    + [
-                        "",
+                        f"{parsed_batch['motion_intensity']:.4f}",
+                        x,
+                        y,
+                        z,
                         "",
                     ]
-                )
-                self._enqueue_stream_log(state, stream_row)
-                self._enqueue_computed_log(state, computed_row)
+                    self._enqueue_imu_log(state, imu_row)
+
             except Exception:
                 _log.debug("IMU callback error for %s", mac, exc_info=True)
 
@@ -939,14 +890,8 @@ class NuanicMonitor:
                         "",  # 11: Skin_Conductance_uS
                         "",  # 12: D306_Clock
                         "",  # 13: D306_Context
-                        "",  # 14: IMU_Batch_Clock
-                        "",  # 15: IMU_Batch_Context
-                        "",  # 16: IMU_X0
-                        "",  # 17: IMU_Y0
-                        "",  # 18: IMU_Z0
-                        "",  # 19: IMU_Motion_Intensity
-                        state_code if state_code is not None else "",  # 20: State_Code
-                        data.hex(),  # 21: payload_hex
+                        state_code if state_code is not None else "",  # 14: State_Code
+                        data.hex(),  # 15: payload_hex
                         data.hex(),  # 22: full_packet_hex
                         "",  # 23: decoded_fields
                     ]
@@ -955,13 +900,6 @@ class NuanicMonitor:
                 self._enqueue_log(state, row)
 
                 stream_row = self._base_row(state, "STATE_3C18") + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
                     "",
                     "",
                     "",
@@ -1002,14 +940,8 @@ class NuanicMonitor:
                         "",  # 11: Skin_Conductance_uS
                         "",  # 12: D306_Clock
                         "",  # 13: D306_Context
-                        "",  # 14: IMU_Batch_Clock
-                        "",  # 15: IMU_Batch_Context
-                        "",  # 16: IMU_X0
-                        "",  # 17: IMU_Y0
-                        "",  # 18: IMU_Z0
-                        "",  # 19: IMU_Motion_Intensity
-                        "",  # 20: State_Code
-                        data.hex(),  # 21: payload_hex
+                        "",  # 14: State_Code
+                        data.hex(),  # 15: payload_hex
                         data.hex(),  # 22: full_packet_hex
                         json.dumps({"len": len(data)}),  # 23: decoded_fields
                     ]
@@ -1018,13 +950,6 @@ class NuanicMonitor:
                 self._enqueue_log(state, row)
 
                 stream_row = self._base_row(state, "LIVE_EDA_42DC") + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
                     "",
                     "",
                     "",
@@ -1336,6 +1261,7 @@ class NuanicMonitor:
                 state.writer_task,
                 state.stream_writer_task,
                 state.computed_writer_task,
+                state.imu_writer_task,
             ):
                 if task:
                     try:
