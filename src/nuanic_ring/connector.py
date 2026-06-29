@@ -1,3 +1,7 @@
+import logging
+
+_log = logging.getLogger(__name__)
+
 """BLE connection and device management for Nuanic ring(s).
 
 Scanning and ring discovery live in ``_scanner.py`` (RingScanner);
@@ -587,14 +591,14 @@ class NuanicConnector:
     ) -> bool:
         client = self.clients.get(address.upper()) if address else self.client
         if not client or not getattr(client, "is_connected", False):
-            print(f"[FAIL] Subscription error for {label}: Not connected")
+            _log.warning(f"[FAIL] Subscription error for {label}: Not connected")
             return False
         try:
             await client.start_notify(char_uuid, callback)
-            print(f"[OK] Subscribed to {label}")
+            _log.info(f"[OK] Subscribed to {label}")
             return True
         except Exception as e:
-            print(f"[FAIL] Subscription error for {label}: {e}")
+            _log.error(f"[FAIL] Subscription error for {label}: {e}")
             return False
 
     async def _unsubscribe(self, char_uuid: str, address: Optional[str] = None) -> None:

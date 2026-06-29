@@ -10,19 +10,21 @@ By default, session logs are stored in the directory specified by `--log-dir` (d
 
 Logs are created **lazily**—the file is only generated when the first data packet is successfully received from the ring.
 
-Files are named using the following pattern:
+Files are organized into session folders and named using the following pattern:
 ```
-SessionDate_DD-MM-YYYY_HH-MM-SS_[ParticipantID_]ring-<Last6MAC>.csv
+<log_dir>/SessionDate_DD-MM-YYYY_HH-MM-SS/csvs/[ParticipantID_]ring-<Last6MAC>.csv
 ```
-*Example:* `SessionDate_08-06-2026_10-54-28_ring-72F207.csv`
+*Example:* `data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs/ring-72F207.csv`
 
 The monitor supports three CSV layouts:
 
-- `--csv-layout combined` writes the legacy mixed CSV shown below.
+- `--csv-layout combined` writes the legacy mixed CSV shown below (IMU rows are no longer written here).
 - `--csv-layout split` writes two files per ring:
   - `..._streamed.csv`: only ring-native fields plus raw payloads and marker rows.
   - `..._computed.csv`: locally computed physiology, motion, calibration, and rate diagnostics plus marker rows.
 - `--csv-layout both` writes the legacy combined CSV and the two split files.
+
+> **Note:** IMU data is always written to a separate, dedicated `..._imu.csv` file, regardless of the `csv_layout` choice.
 
 ---
 
@@ -67,7 +69,9 @@ The legacy combined CSV contains a fixed set of **30 columns**. Because the ring
 
 ## 🔄 Record Types & Column Population
 
-Since data streams are asynchronous, the CSV is sparse. Below is the mapping of which columns are populated for each `data_type` value. All unlisted columns for a given type are written as empty strings (`""`).
+Since data streams are asynchronous, the unified CSV (combined/split) is sparse. Below is the mapping of which columns are populated for each `data_type` value. All unlisted columns for a given type are written as empty strings (`""`).
+
+> **Note:** IMU columns (`IMU_Batch_Clock`, `IMU_Batch_Context`, `IMU_X0`, `IMU_Y0`, `IMU_Z0`, `IMU_Motion_Intensity`) remain in the combined/streamed headers for legacy compatibility but are now **always empty**. IMU data has been moved to its own dedicated file.
 
 ### 1. `D306_EDA`
 This is the primary physiological stream (~16 Hz). It provides raw skin impedance and the ring's proprietary stress index, alongside the SDK's computed arousal metrics.
@@ -80,16 +84,19 @@ This is the primary physiological stream (~16 Hz). It provides raw skin impedanc
   * Raw packet: `payload_hex` (contains the raw 16-byte D306 packet)
   * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop`
 
-### 2. `IMU_BATCH_468F`
+### 2. Dedicated IMU CSV (`..._imu.csv`)
 This is the accelerometer stream (~1 Hz). It provides a batch of 14 samples of X, Y, Z acceleration data per packet to conserve BLE bandwidth.
+This data is now unrolled and logged into its own dedicated file.
 
-* **Populated columns:**
-  * Base columns: `timestamp`, `elapsed_ms`, `device_mac`, `connection_state`, `data_type`
-  * Primary data: `IMU_X0`, `IMU_Y0`, `IMU_Z0` (First X, Y, Z coordinates of the batch)
-  * Derived metrics: `IMU_Motion_Intensity` (Average magnitude of the 14 samples in the batch)
-  * Hardware headers: `IMU_Batch_Clock`, `IMU_Batch_Context`
-  * Raw packet: `payload_hex` (84-byte accelerometer batch data), `full_packet_hex` (92-byte full notification packet)
-  * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop`
+* **File Pattern:** `<log_dir>/SessionDate_DD-MM-YYYY_HH-MM-SS/csvs/[ParticipantID_]ring-<Last6MAC>_imu.csv`
+* **Columns:**
+  * `timestamp`: High-resolution local ISO timestamp matching the EDA CSV for easy merging.
+  * `elapsed_ms`: Milliseconds elapsed since the monitoring session started (matches the EDA CSV `elapsed_ms` column for direct alignment).
+  * `clock`: Firmware clock counter from the IMU batch.
+  * `context`: Context identifier from the IMU batch.
+  * `motion_intensity`: Standard deviation of the 14 magnitude vectors (eliminating gravity, maintaining 1-second temporal resolution).
+  * `x`, `y`, `z`: Individual accelerometer coordinates (raw `int16`).
+  * `marker`: JSON-encoded marker payload for event annotations (empty for IMU data rows).
 
 ### 3. `STATE_3C18`
 This stream indicates whether the ring is worn on the finger. It is sent whenever the contact status transitions.
@@ -139,11 +146,11 @@ The `MM_Arousal_Score` (1–100) is calculated in `mm_compat.py` via the followi
    $$\text{Arousal Score} = 1 + 99 \times \frac{\text{Raw Score} - \text{Raw Score}_{\text{min}}}{\text{Raw Score}_{\text{max}} - \text{Raw Score}_{\text{min}}}$$
 
 ### 3. IMU Motion Intensity
-The IMU stream returns batches of 14 accelerometer samples. To compute a single motion index, the magnitude of each $(x, y, z)$ acceleration vector is calculated, and their average is logged as `IMU_Motion_Intensity`:
+The IMU stream returns batches of 14 accelerometer samples. To compute a single motion index that eliminates gravity and represents true movement, the standard deviation of the 14 acceleration magnitudes is calculated. This single 1-second resolution value is assigned to all 14 unrolled rows in the `_imu.csv` file:
 
 $$\text{Magnitude}_i = \sqrt{x_i^2 + y_i^2 + z_i^2}$$
 
-$$\text{IMU\_Motion\_Intensity} = \frac{1}{14} \sum_{i=1}^{14} \text{Magnitude}_i$$
+$$\text{IMU\_Motion\_Intensity} = \sigma(\text{Magnitude}_{1..14})$$
 
 ---
 

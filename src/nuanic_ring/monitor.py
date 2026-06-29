@@ -749,9 +749,9 @@ class NuanicMonitor:
                         dne_stress_index,
                         clock,
                         context,
-                        data.hex(),
-                        data.hex(),
                         "",
+                        data.hex(),
+                        data.hex(),
                         "",
                     ]
                     + self._row_rate_tail(state, would_drop)
@@ -978,7 +978,7 @@ class NuanicMonitor:
         # Optional Theory of Two: Firmware Warmup Sequence
         had_warmup = False
         if self.target_hz and self.attempt_ring_rate_control and self.use_warmup:
-            print(
+            _log.info(
                 f"[WARMUP] Priming firmware for Rate Control ({self.target_hz}Hz) on {mac}..."
             )
             warm_ok = await self.connector.connect_device(address=mac, device=device)
@@ -988,14 +988,13 @@ class NuanicMonitor:
                     target_hz=int(self.target_hz),
                     address=mac,
                 )
-                print(
+                _log.info(
                     f"[WARMUP] Releasing {mac} to complete prime sequence... (delay: {self.warmup_delay}s)"
                 )
                 await self.connector.disconnect(address=mac)
                 await asyncio.sleep(self.warmup_delay)
-                had_warmup = True
             else:
-                print(
+                _log.info(
                     f"[WARMUP] Failed initial prime connect for {mac}. Trying normal path."
                 )
 
@@ -1003,14 +1002,14 @@ class NuanicMonitor:
 
         # Aggressive connection fallback if the OS link state is stuck
         if not ok and self.allow_reset_bt:
-            print(
+            _log.info(
                 f"[RECOVERY] Connection failed for {mac}. Trying aggressive BT radio reset..."
             )
             await self.connector._reset_bluetooth_radio()
             await asyncio.sleep(1.0)
             ok = await self.connector.connect_device(address=mac, device=device)
         elif not ok:
-            print(
+            _log.info(
                 f"[RECOVERY] Connection failed for {mac}. (Aggressive reset disabled)"
             )
 
@@ -1036,7 +1035,7 @@ class NuanicMonitor:
             if result.get("echo_hex"):
                 detail_bits.append(f"e={result['echo_hex']}")
             state.rate_control_detail = " ".join(detail_bits)
-            print(
+            _log.info(
                 f"[INFO] {mac} Rate: {result.get('target_hz')}Hz | "
                 f"Stat: {result.get('status')} | "
                 f"P: {result.get('payload_hex')} | "
@@ -1081,12 +1080,12 @@ class NuanicMonitor:
         if monitor_all or targets_count > 1:
             if self.target_hz and self.target_hz > 16:
                 if self.force_hz:
-                    print(
+                    _log.info(
                         f"[DANGER] Multi-ring Hz safety cap bypassed "
                         f"via force: {self.target_hz} Hz"
                     )
                 else:
-                    print(
+                    _log.info(
                         f"[WARN] Multi-ring sessions are unstable above ~16 Hz due to hardware limitations. "
                         f"Capping {self.target_hz} Hz -> 16.0 Hz."
                     )
@@ -1139,13 +1138,13 @@ class NuanicMonitor:
                 and platform.system() == "Windows"
                 and self.allow_reset_bt
             ):
-                print(
+                _log.info(
                     "[BT-RESET] No rings discovered and allow_reset_bt is enabled. "
                     "Resetting Bluetooth adapter to clear stale connections..."
                 )
                 reset_ok = await self.connector._reset_bluetooth_radio()
                 if reset_ok:
-                    print("[BT-RESET] Rescanning after adapter reset...")
+                    _log.info("[BT-RESET] Rescanning after adapter reset...")
                     discovered = await self.connector.discover_all_matching_rings(
                         include_device=True,
                         scan_timeout=s_timeout,
@@ -1244,7 +1243,7 @@ class NuanicMonitor:
                     except asyncio.CancelledError:
                         pass
             if state.dropped_rows > 0:
-                print(
+                _log.info(
                     f"[WARN] {state.mac}: {state.dropped_rows} log rows "
                     f"were dropped (queue full). Consider reducing target_hz "
                     f"or increasing queue size."
