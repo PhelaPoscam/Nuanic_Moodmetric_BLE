@@ -21,7 +21,6 @@ import struct
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
 
 import matplotlib.pyplot as plt
 import numpy as np

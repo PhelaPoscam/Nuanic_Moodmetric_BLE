@@ -190,3 +190,28 @@ Additionally, the ring transmits batched IMU data at ~1 Hz (`468f2717`), providi
 **Last Updated:** March 13, 2026  
 **Reverse-Engineering Method:** BLE characteristic scanning, packet structure analysis, write command testing  
 **Certainty Level:** High (validated with packet inspection and multiple connection tests)
+
+## TODO: Future Reverse-Engineering Goals
+
+Based on the official Nuanic Data Manual, there are several advanced features currently only accessible via the official mobile app that we could reverse-engineer by capturing an Android Bluetooth HCI Snoop Log:
+
+### 1. Trigger Offline Recording Session
+The manual indicates the ring has internal memory to store 20-60 minutes of raw EDA at 16Hz or up to 24 hours of preprocessed Algo data. 
+- **Goal:** Identify the GATT characteristic and byte payload the app sends to instruct the ring to start saving data to internal flash memory (which increments the `D306_Context` ID).
+- **How to capture:** Open the app and manually start a recording session while HCI snoop logging is active.
+
+### 2. Time Synchronization Command
+The manual notes that timestamps may experience systematic time drifts and that users can force a time update via `Settings > My Ring > Reference Time`.
+- **Goal:** Reverse-engineer the time sync payload so our SDK can automatically align the ring's internal clock with the PC clock at the start of a session.
+- **How to capture:** Tap "Reference Time" in the app while logging.
+
+### 3. Historical Data Download Protocol
+When an offline recording session finishes or a user comes back into Bluetooth range, the app downloads the stored data (Raw EDA or Historical DNE/SRL/SRRN).
+- **Goal:** Reverse-engineer the bulk transfer/download protocol so we can recover data from the ring's memory if a participant walks out of range during a study.
+- **How to capture:** Let the ring store some data offline, then reconnect the app and capture the sync process.
+
+**Instructions for Android HCI Capture:**
+1. Enable **Developer Options** on the Android phone.
+2. Turn on **Enable Bluetooth HCI snoop log**.
+3. Perform the desired actions in the Nuanic App.
+4. Export the Bluetooth HCI Snoop Log (usually a `btsnoop_hci.log` file) and analyze it.
