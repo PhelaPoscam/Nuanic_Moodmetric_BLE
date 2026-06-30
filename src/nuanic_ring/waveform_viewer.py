@@ -21,8 +21,12 @@ import struct
 import threading
 import time
 from collections import deque
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
+
+if TYPE_CHECKING:
+    from nuanic_ring.monitor import NuanicMonitor
 import numpy as np
 
 from .connector import NuanicConnector
