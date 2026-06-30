@@ -46,10 +46,21 @@ class RingDeviceState:
     imu_batch_count: int = 0
     state_count: int = 0
     live_eda_count: int = 0
-    d306_buffer: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=10))
+    d306_buffer: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=2000))
     imu_batch_buffer: Deque[Dict[str, Any]] = field(
-        default_factory=lambda: deque(maxlen=5)
+        default_factory=lambda: deque(maxlen=500)
     )
+
+    mm_filtered_us_wave: Deque[float] = field(default_factory=lambda: deque(maxlen=2000))
+    mm_arousal_wave: Deque[float] = field(default_factory=lambda: deque(maxlen=2000))
+    live_dna_index: Deque[int] = field(default_factory=lambda: deque(maxlen=2000))
+    live_dna_word2: Deque[float] = field(default_factory=lambda: deque(maxlen=2000))
+    
+    imu_index: Deque[int] = field(default_factory=lambda: deque(maxlen=500))
+    imu_intensity: Deque[float] = field(default_factory=lambda: deque(maxlen=500))
+
+    mm_calibration_remaining: float = 0.0
+    mm_calibrated: bool = False
 
     # Independent processing chain per ring
     signal_conditioner: SignalConditioner = field(default_factory=SignalConditioner)
@@ -735,6 +746,12 @@ class NuanicMonitor:
                         "dne_stress_index": dne_stress_index,
                     }
                 )
+                state.mm_filtered_us_wave.append(filtered_us)
+                state.mm_arousal_wave.append(state.arousal_score)
+                state.live_dna_index.append(state.d306_count)
+                state.live_dna_word2.append(eda_value)
+                state.mm_calibration_remaining = score_state["calibration_seconds_remaining"]
+                state.mm_calibrated = score_state["calibrated"]
 
                 smoothed_ts, elapsed_ms = self._get_smoothed_time(state, "d306", clock)
                 _row_kw: Dict[str, Any] = {
@@ -826,6 +843,8 @@ class NuanicMonitor:
                     parsed_batch["first_z"],
                 )
                 state.imu_batch_buffer.append(parsed_batch)
+                state.imu_index.append(state.imu_batch_count)
+                state.imu_intensity.append(parsed_batch["motion_intensity"])
 
                 smoothed_ts, elapsed_ms = self._get_smoothed_time(
                     state, "imu", parsed_batch["clock"]

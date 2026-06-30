@@ -335,6 +335,10 @@ def ring_monitor() -> int:
                 target_hz=args.target_hz,
                 attempt_rate_control=(args.rate_control == "yes"),
                 raw_signal=args.raw,
+                enable_logging=args.enable_logging,
+                log_dir=args.log_dir,
+                participant_id=args.participant_id,
+                csv_layout=args.csv_layout,
             )
         return asyncio.run(_run_monitor_cli(args))
     except KeyboardInterrupt:
