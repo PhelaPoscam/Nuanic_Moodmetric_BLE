@@ -764,7 +764,7 @@ class NuanicMonitor:
                 state.mm_calibration_remaining = score_state[
                     "calibration_seconds_remaining"
                 ]
-                state.mm_calibrated = score_state["calibrated"]
+                state.mm_calibrated = bool(score_state["calibrated"])
 
                 smoothed_ts, elapsed_ms = self._get_smoothed_time(state, "d306", clock)
                 _row_kw: Dict[str, Any] = {
