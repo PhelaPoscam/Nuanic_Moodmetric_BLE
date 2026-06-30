@@ -46,16 +46,23 @@ class RingDeviceState:
     imu_batch_count: int = 0
     state_count: int = 0
     live_eda_count: int = 0
-    d306_buffer: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=2000))
+    d306_buffer: Deque[Dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=2000)
+    )
     imu_batch_buffer: Deque[Dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=500)
     )
 
-    mm_filtered_us_wave: Deque[float] = field(default_factory=lambda: deque(maxlen=2000))
+    mm_filtered_us_wave: Deque[float] = field(
+        default_factory=lambda: deque(maxlen=2000)
+    )
     mm_arousal_wave: Deque[float] = field(default_factory=lambda: deque(maxlen=2000))
     live_dna_index: Deque[int] = field(default_factory=lambda: deque(maxlen=2000))
     live_dna_word2: Deque[float] = field(default_factory=lambda: deque(maxlen=2000))
-    
+    dne_stress_index_wave: Deque[float] = field(
+        default_factory=lambda: deque(maxlen=2000)
+    )
+
     imu_index: Deque[int] = field(default_factory=lambda: deque(maxlen=500))
     imu_intensity: Deque[float] = field(default_factory=lambda: deque(maxlen=500))
 
@@ -134,8 +141,8 @@ class NuanicMonitor:
     ):
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
-        if csv_layout not in {"combined", "split", "both"}:
-            raise ValueError("csv_layout must be one of: combined, split, both")
+        if csv_layout not in {"combined", "split", "both", "nuanic"}:
+            raise ValueError("csv_layout must be one of: combined, split, both, nuanic")
         self.csv_layout = csv_layout
         self.force_hz = force_hz
         self.participant_id = participant_id
@@ -267,7 +274,7 @@ class NuanicMonitor:
         self.device_states[mac_key] = state
 
         if self.enable_logging:
-            if self.csv_layout in {"combined", "both"}:
+            if self.csv_layout in {"combined", "both", "nuanic"}:
                 state.log_queue = asyncio.Queue(maxsize=5000)
             if self.csv_layout in {"split", "both"}:
                 state.stream_log_queue = asyncio.Queue(maxsize=5000)
@@ -319,27 +326,30 @@ class NuanicMonitor:
 
     def _initialize_log_file(self, state: RingDeviceState) -> None:
         """Lazily initialize the CSV log file only when data starts arriving."""
-        header = [
-            "timestamp",
-            "elapsed_ms",
-            "device_mac",
-            "connection_state",
-            "data_type",
-            "EDA_Raw_Value",
-            "Stress_Index",
-            "D306_Clock",
-            "D306_Context",
-            "State_Code",
-            "payload_hex",
-            "full_packet_hex",
-            "decoded_fields",
-            "D306_Observed_Hz",
-            "IMU_Observed_Hz",
-            "Rate_Target_Hz",
-            "Rate_Control_Status",
-            "Equalize_Mode",
-            "Equalize_WouldDrop",
-        ]
+        if self.csv_layout == "nuanic":
+            header = ["address", "time_unix", "time", "dne", "srl", "srrn", "eda"]
+        else:
+            header = [
+                "timestamp",
+                "elapsed_ms",
+                "device_mac",
+                "connection_state",
+                "data_type",
+                "EDA_Raw_Value",
+                "Stress_Index",
+                "D306_Clock",
+                "D306_Context",
+                "State_Code",
+                "payload_hex",
+                "full_packet_hex",
+                "decoded_fields",
+                "D306_Observed_Hz",
+                "IMU_Observed_Hz",
+                "Rate_Target_Hz",
+                "Rate_Control_Status",
+                "Equalize_Mode",
+                "Equalize_WouldDrop",
+            ]
         self._initialize_single_log(
             state, "", header, "log_file", "log_queue", "writer_task"
         )
@@ -750,7 +760,10 @@ class NuanicMonitor:
                 state.mm_arousal_wave.append(state.arousal_score)
                 state.live_dna_index.append(state.d306_count)
                 state.live_dna_word2.append(eda_value)
-                state.mm_calibration_remaining = score_state["calibration_seconds_remaining"]
+                state.dne_stress_index_wave.append(dne_stress_index)
+                state.mm_calibration_remaining = score_state[
+                    "calibration_seconds_remaining"
+                ]
                 state.mm_calibrated = score_state["calibrated"]
 
                 smoothed_ts, elapsed_ms = self._get_smoothed_time(state, "d306", clock)
@@ -759,20 +772,47 @@ class NuanicMonitor:
                     "custom_elapsed": elapsed_ms,
                 }
 
-                row = (
-                    self._base_row(state, "D306_EDA", **_row_kw)
-                    + [
-                        eda_value,
+                if self.csv_layout == "nuanic":
+                    from datetime import timezone
+
+                    ts_unix = f"{smoothed_ts.timestamp():.6f}"
+                    ts_str = (
+                        smoothed_ts.astimezone(timezone.utc).strftime(
+                            "%Y-%m-%d %H:%M:%S.%f"
+                        )[:-3]
+                        + "+00"
+                    )
+
+                    # Compute SRL (Tonic Resistance in Ohms) from our Filtered Conductance
+                    srl_ohms = int(1_000_000 / filtered_us) if filtered_us > 0 else 0
+                    # SRRN (Skin Resistance Reactions N) is our freq (SCRs per minute)
+                    srrn = f"{freq:.1f}"
+
+                    row = [
+                        state.mac,
+                        ts_unix,
+                        ts_str,
                         dne_stress_index,
-                        clock,
-                        context,
-                        "",
-                        data.hex(),
-                        data.hex(),
-                        "",
+                        srl_ohms,
+                        srrn,
+                        eda_value,
                     ]
-                    + self._row_rate_tail(state, would_drop)
-                )
+                    self._enqueue_log(state, row)
+                else:
+                    row = (
+                        self._base_row(state, "D306_EDA", **_row_kw)
+                        + [
+                            eda_value,
+                            dne_stress_index,
+                            clock,
+                            context,
+                            "",
+                            data.hex(),
+                            data.hex(),
+                            "",
+                        ]
+                        + self._row_rate_tail(state, would_drop)
+                    )
                 self._enqueue_log(state, row)
 
                 stream_row = self._base_row(state, "D306_EDA", **_row_kw) + [

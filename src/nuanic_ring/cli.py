@@ -260,6 +260,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--csv-layout", choices=["combined", "split", "both"], default="combined"
     )
+    parser.add_argument(
+        "--nuanic-export", action="store_true", help="Output CSV in exact Nuanic format"
+    )
     parser.add_argument("--imu-refresh", type=int, default=5)
     parser.add_argument("--calibration-seconds", type=int, default=60)
     parser.add_argument("--no-clear", action="store_true")
@@ -379,12 +382,15 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         try:
             await run_diagnostics(
                 connector.client,
-                subscribe_streams=args.subscribe_core_streams,
+                subscribe_streams=args.subscribe_streams,
                 listen_seconds=args.listen_seconds,
             )
         finally:
             await connector.disconnect()
         return 0
+
+    if args.nuanic_export:
+        args.csv_layout = "nuanic"
 
     if args.list_rings:
         connector = NuanicConnector()
