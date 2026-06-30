@@ -21,7 +21,7 @@ import struct
 import threading
 import time
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Sequence
 
 import matplotlib.pyplot as plt
 
@@ -34,7 +34,7 @@ from .mm_compat import MMFeatures, MMLikeScorer, convert_eda
 from .signal_processing import SignalConditioner
 
 
-def smooth_data(data: list, window: int) -> list:
+def smooth_data(data: "Sequence[Any]", window: int) -> list:
     """Apply moving-average smoothing."""
     if not data or window <= 1:
         return data
@@ -230,7 +230,11 @@ class NuanicWaveformViewer:
 
 
 def _autoscale_axis(
-    axis, line, x_data: list[float], y_data: list[float], smooth_window: int
+    axis,
+    line,
+    x_data: "Sequence[float]",
+    y_data: "Sequence[float]",
+    smooth_window: int = 1,
 ):
     if not x_data or not y_data:
         return
@@ -258,7 +262,7 @@ def _autoscale_axis(
 
 
 def _run_plot_blocking(
-    monitor: "NuanicMonitor",
+    monitor: Any,
     window_seconds: int,
     refresh_ms: int,
     smooth_window: int = 1,
