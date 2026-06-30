@@ -254,7 +254,7 @@ def _autoscale_axis(
 
 
 def _run_plot_blocking(
-    viewer: NuanicWaveformViewer,
+    monitor: "NuanicMonitor",
     window_seconds: int,
     refresh_ms: int,
     smooth_window: int = 1,
@@ -331,24 +331,31 @@ def _run_plot_blocking(
     fig.canvas.draw()
 
     try:
-        while viewer._running:
+        while monitor.running:
             if not plt.fignum_exists(fig.number):
                 break
-            with viewer.state.lock:
-                dna_x = list(viewer.state.live_dna_index)[-max_points:]
+            
+            state = None
+            if monitor.device_states:
+                state = list(monitor.device_states.values())[0]
 
-                imu_x = list(viewer.state.imu_index)[-max_points:]
-                imu_y = list(viewer.state.imu_intensity)[-max_points:]
+            if state:
+                dna_x = list(state.live_dna_index)[-max_points:]
+                imu_x = list(state.imu_index)[-max_points:]
+                imu_y = list(state.imu_intensity)[-max_points:]
+                eda_y = list(state.mm_filtered_us_wave)[-max_points:]
+                arousal_y = list(state.mm_arousal_wave)[-max_points:]
+                w2_raw = list(state.live_dna_word2)[-max_points:]
 
-                eda_y = list(viewer.state.mm_filtered_us_wave)[-max_points:]
-                arousal_y = list(viewer.state.mm_arousal_wave)[-max_points:]
-
-                w2_raw = list(viewer.state.live_dna_word2)[-max_points:]
-
-                live_dna_packets = viewer.state.live_dna_packets
-                imu_packets = viewer.state.imu_packets
-                cal_remaining = viewer.state.mm_calibration_remaining
-                calibrated = viewer.state.mm_calibrated
+                live_dna_packets = state.d306_count
+                imu_packets = state.imu_batch_count
+                cal_remaining = state.mm_calibration_remaining
+                calibrated = state.mm_calibrated
+            else:
+                dna_x, imu_x, imu_y, eda_y, arousal_y, w2_raw = [], [], [], [], [], []
+                live_dna_packets = imu_packets = 0
+                cal_remaining = 60
+                calibrated = False
 
             _autoscale_axis(ax_raw, line_raw, dna_x, w2_raw, smooth_window)
             _autoscale_axis(ax_eda, line_eda, dna_x, eda_y, smooth_window)
@@ -380,8 +387,13 @@ def _run_plot_blocking(
                 f"LIVE MONITOR | Arousal: {latest_arousal:.1f} | Calibrated: {calibrated}"
             )
 
-            fig.canvas.draw_idle()
-            plt.pause(refresh_ms / 1000.0)
+            try:
+                fig.canvas.draw_idle()
+                plt.pause(refresh_ms / 1000.0)
+            except KeyboardInterrupt:
+                break
+            except Exception:
+                pass
 
     except Exception as e:
         print(f"[ERROR] Plotting loop crash: {e}")
@@ -461,17 +473,26 @@ def run_waveform_viewer_sync(
     target_hz: float | None = None,
     attempt_rate_control: bool = False,
     raw_signal: bool = False,
+    enable_logging: bool = False,
+    log_dir: str = "data/ring_logs",
+    participant_id: str | None = None,
+    csv_layout: str = "combined",
 ) -> int:
     """Run standalone live telemetry plotter using threads.
 
     The Matplotlib GUI runs on the main thread, while the BLE subscriptions and
     asyncio event loop run on a background daemon thread.
     """
-    viewer = NuanicWaveformViewer(
-        ring_addr=ring_addr,
+    from .monitor import NuanicMonitor
+
+    monitor = NuanicMonitor(
+        log_dir=log_dir,
+        enable_logging=enable_logging,
+        participant_id=participant_id,
+        csv_layout=csv_layout,
         calibration_seconds=calibration_seconds,
         target_hz=target_hz,
-        attempt_rate_control=attempt_rate_control,
+        attempt_ring_rate_control=attempt_rate_control,
         raw_signal=raw_signal,
     )
 
@@ -481,16 +502,18 @@ def run_waveform_viewer_sync(
 
     async def async_worker():
         try:
-            if not await viewer.connect_and_subscribe():
+            started = await monitor.start_multi(ring_addresses=[ring_addr] if ring_addr else None)
+            if not started:
                 connection_failed.set()
                 return
             connection_success.set()
-            await viewer.run_until_stopped()
+            while monitor.running:
+                await asyncio.sleep(0.1)
         except Exception as e:
             print(f"[ERROR] Async worker exception: {e}")
             connection_failed.set()
         finally:
-            await viewer.stop()
+            await monitor.stop_multi()
 
     def run_loop():
         asyncio.set_event_loop(loop)
@@ -512,7 +535,7 @@ def run_waveform_viewer_sync(
         print(
             "[FAIL] Could not connect and subscribe to high-frequency telemetry streams"
         )
-        viewer._running = False
+        monitor.running = False
         if loop.is_running():
             try:
                 loop.call_soon_threadsafe(loop.stop)
@@ -527,15 +550,18 @@ def run_waveform_viewer_sync(
 
     try:
         _run_plot_blocking(
-            viewer,
+            monitor,
             window_seconds,
             refresh_ms,
             smooth_window,
         )
     except KeyboardInterrupt:
-        print("\n[STOP] Interrupted by user")
+        pass
+    except Exception as e:
+        print(f"\n[STOP] Plotter exception: {e}")
     finally:
-        viewer._running = False
+        print("\n[STOP] Interrupted by user" if not monitor.running else "\n[STOP] Closing plotter...")
+        monitor.running = False
         bg_thread.join(timeout=3.0)
         if bg_thread.is_alive():
             print("[WARN] Worker thread did not exit cleanly, forcing loop stop...")
