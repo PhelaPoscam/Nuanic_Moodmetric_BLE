@@ -48,6 +48,9 @@ nuanic-ring-monitor --waveform
 
 # Run post-session analysis on a log
 nuanic-ring-analyzer data/ring_logs/SessionDate_YYYY-MM-DD_HH-MM-SS/csvs/ring--MAC.csv
+
+# Output exact Nuanic sample format CSV with SRL and SRRN
+nuanic-ring-monitor --nuanic-export --log
 ```
 
 ---

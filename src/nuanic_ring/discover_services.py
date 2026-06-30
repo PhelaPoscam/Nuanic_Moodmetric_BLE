@@ -34,7 +34,7 @@ except ModuleNotFoundError:
 
 SERVICE_UUID = "5491faaf-b0c2-4167-8f3d-bc6b31db69e7"
 BUFFER_CHAR = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"
-MYSTERY_NOTIFY = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
+ALGO_1MIN_NOTIFY = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
 
 WRITE_ONLY_CHARS = {
     "2175c13f-60e4-4de5-80af-0d06f1b54880": "WRITE_1",
@@ -336,8 +336,8 @@ async def profile_notify(client, chars, seconds: int):
             print(f"  first: {st.first_packet.hex()[:64]}...")
             print(f"  last:  {st.last_packet.hex()[:64]}...")
             print(f"  int16 summary: {summarize_i16(st.first_packet)}")
-        if key == MYSTERY_NOTIFY.lower() and st.count == 0:
-            print("  note: mystery notify remained silent in this run")
+        if key == ALGO_1MIN_NOTIFY.lower() and st.count == 0:
+            print("  note: algo/dne notify remained silent in this run")
 
 
 async def run_write_probe(client):

@@ -294,7 +294,7 @@ def _run_plot_blocking(
 
     ax_raw.set_title("Raw EDA (ADC Count)", color="#BBBBBB")
     ax_eda.set_title("Filtered Conductance (uS)", color="#00ffff")
-    ax_arousal.set_title("Moodmetric Arousal Score (1-100)", color="#FFD700")
+    ax_arousal.set_title("Nuanic DNE (Stress Index)", color="white", fontsize=10)
     ax_imu.set_title("IMU Motion Intensity", color="#ff00ff")
     ax_summary.set_title("Physiological Summary", color="lightgray")
 
@@ -334,7 +334,7 @@ def _run_plot_blocking(
         while monitor.running:
             if not plt.fignum_exists(fig.number):
                 break
-            
+
             state = None
             if monitor.device_states:
                 state = list(monitor.device_states.values())[0]
@@ -344,7 +344,7 @@ def _run_plot_blocking(
                 imu_x = list(state.imu_index)[-max_points:]
                 imu_y = list(state.imu_intensity)[-max_points:]
                 eda_y = list(state.mm_filtered_us_wave)[-max_points:]
-                arousal_y = list(state.mm_arousal_wave)[-max_points:]
+                arousal_y = list(state.dne_stress_index_wave)[-max_points:]
                 w2_raw = list(state.live_dna_word2)[-max_points:]
 
                 live_dna_packets = state.d306_count
@@ -376,7 +376,7 @@ def _run_plot_blocking(
                 "Physiological Summary\n"
                 "----------------------------\n"
                 f"Status:    {cal_status}\n"
-                f"Arousal:   {latest_arousal:.1f}/100\n"
+                f"Nuanic DNE:{latest_arousal:.1f}/100\n"
                 f"Conduct.:  {latest_eda_us:.4f} uS\n"
                 f"Motion:    {latest_imu_val:.1f} intensity\n\n"
                 f"D306 Pkts: {live_dna_packets}\n"
@@ -384,7 +384,7 @@ def _run_plot_blocking(
             )
 
             status_text.set_text(
-                f"LIVE MONITOR | Arousal: {latest_arousal:.1f} | Calibrated: {calibrated}"
+                f"LIVE MONITOR | Nuanic DNE: {latest_arousal:.1f} | Calibrated: {calibrated}"
             )
 
             try:
@@ -502,7 +502,9 @@ def run_waveform_viewer_sync(
 
     async def async_worker():
         try:
-            started = await monitor.start_multi(ring_addresses=[ring_addr] if ring_addr else None)
+            started = await monitor.start_multi(
+                ring_addresses=[ring_addr] if ring_addr else None
+            )
             if not started:
                 connection_failed.set()
                 return
@@ -560,7 +562,11 @@ def run_waveform_viewer_sync(
     except Exception as e:
         print(f"\n[STOP] Plotter exception: {e}")
     finally:
-        print("\n[STOP] Interrupted by user" if not monitor.running else "\n[STOP] Closing plotter...")
+        print(
+            "\n[STOP] Interrupted by user"
+            if not monitor.running
+            else "\n[STOP] Closing plotter..."
+        )
         monitor.running = False
         bg_thread.join(timeout=3.0)
         if bg_thread.is_alive():

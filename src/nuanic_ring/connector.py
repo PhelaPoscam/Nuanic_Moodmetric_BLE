@@ -30,7 +30,9 @@ class NuanicConnector:
 
     # GATT UUIDs (Verified best-fit interpretations as of 2026-06)
     STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # Off-finger / on-finger state indicator stream
-    LIVE_EDA_UUID = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"  # Live notify stream (currently no reliable payload)
+    ALGO_1MIN_UUID = (
+        "42dcb71b-1817-43bd-8ea3-7272780a1c9f"  # 1-minute Algo/DNE historical stream
+    )
     LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # High-rate physiological stream (raw EDA + Stress Index) at ~16Hz
     PHYSIOLOGY_UUID = LIVE_DNA_UUID
     IMU_BATCH_UUID = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # Bulk motion / IMU batch stream (14-sample batches at ~1Hz)
@@ -48,7 +50,7 @@ class NuanicConnector:
     BATTERY_CHARACTERISTIC = BATTERY_UUID
     IMU_CHARACTERISTIC = IMU_BATCH_UUID
     RAW_EDA_CHARACTERISTIC = STATE_UUID
-    MYSTERY_NOTIFY_CHARACTERISTIC = LIVE_EDA_UUID
+    ALGO_1MIN_CHARACTERISTIC = ALGO_1MIN_UUID
     STRESS_CHARACTERISTIC = PHYSIOLOGY_UUID
 
     def __init__(
@@ -289,7 +291,7 @@ class NuanicConnector:
                     self.STRESS_CHARACTERISTIC,
                     self.IMU_CHARACTERISTIC,
                     self.RAW_EDA_CHARACTERISTIC,
-                    self.MYSTERY_NOTIFY_CHARACTERISTIC,
+                    self.ALGO_1MIN_CHARACTERISTIC,
                 ]:
                     try:
                         await target_client.stop_notify(char_uuid)
@@ -666,7 +668,7 @@ class NuanicConnector:
     ) -> bool:
         """Subscribe to LIVE_EDA UUID notifications (42dcb71b...)."""
         return await self._subscribe(
-            self.MYSTERY_NOTIFY_CHARACTERISTIC,
+            self.ALGO_1MIN_CHARACTERISTIC,
             callback,
             address,
             "LIVE_EDA notifications",
@@ -674,7 +676,7 @@ class NuanicConnector:
 
     async def unsubscribe_from_live_eda(self, address: Optional[str] = None) -> None:
         """Unsubscribe from LIVE_EDA UUID notifications."""
-        await self._unsubscribe(self.MYSTERY_NOTIFY_CHARACTERISTIC, address)
+        await self._unsubscribe(self.ALGO_1MIN_CHARACTERISTIC, address)
 
     async def attempt_set_sample_rate(
         self,
