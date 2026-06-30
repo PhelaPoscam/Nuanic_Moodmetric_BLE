@@ -37,9 +37,9 @@ from .signal_processing import SignalConditioner
 def smooth_data(data: "Sequence[Any]", window: int) -> list:
     """Apply moving-average smoothing."""
     if not data or window <= 1:
-        return data
+        return list(data)
     if len(data) < window:
-        return data
+        return list(data)
 
     kernel = np.ones(window) / window
     smoothed = np.convolve(data, kernel, mode="valid")
