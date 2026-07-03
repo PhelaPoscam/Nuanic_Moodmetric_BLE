@@ -17,6 +17,13 @@ from nuanic_ring import (
 from nuanic_ring.discover_services import run_diagnostics
 from nuanic_ring.monitor import NuanicMonitor
 
+_MODE_MAP = {
+    "live": MODE_LIVE,
+    "research": MODE_RESEARCH,
+    "raw_eda": MODE_RAW_EDA,
+    "standby": MODE_STANDBY,
+}
+
 
 def _check_dependency(module_name: str, extra: str = "cli") -> bool:
     try:
@@ -104,21 +111,20 @@ def _build_dashboard_table(
         title=f"Nuanic Multi-Ring Dashboard  |  Elapsed: {elapsed_seconds:.1f}s",
         box=box_style,
     )
-    table.add_column("Device MAC", style="cyan")
-    table.add_column("Connection Status", style="magenta")
-    table.add_column("Battery", style="green")
-    table.add_column("Raw EDA", justify="right")
-    table.add_column("Filtered uS", justify="right")
-    table.add_column("Our Arousal (1-100)", justify="right")
-    table.add_column("Ring DNE (0-100)", justify="right")
-    table.add_column("Obs Hz D306/468F", justify="right")
+    table.add_column("MAC", style="cyan", no_wrap=True)
+    table.add_column("Status", style="magenta")
+    table.add_column("Batt", style="green")
+    table.add_column("EDA (Ohm)", justify="right")
+    table.add_column("EDA (uS)", justify="right")
+    table.add_column("Ring DNE", justify="right")
+    table.add_column("Obs Hz", justify="right")
     table.add_column("Rate Ctrl")
     table.add_column("IMU (X,Y,Z)")
     if marker_legend:
         table.caption = f"Markers: {marker_legend}"
 
     if not rows:
-        table.add_row(*(["-"] * 10))
+        table.add_row(*(["-"] * 9))
         return table
 
     for r in rows:
@@ -128,7 +134,6 @@ def _build_dashboard_table(
             r["battery"],
             r["raw_eda"],
             r["filtered_us"],
-            r["arousal_score"],
             r["dne_score"],
             r["observed_hz"],
             r["rate_control"],
@@ -327,6 +332,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-seconds", type=int, default=10)
     parser.add_argument("--refresh-ms", type=int, default=120)
     parser.add_argument("--smooth", type=int, default=1)
+    parser.add_argument(
+        "--check-flash",
+        action="store_true",
+        help="Check offline flash memory usage and status",
+    )
+    parser.add_argument(
+        "--sync-time",
+        action="store_true",
+        help="Manually synchronize ring clock with system time",
+    )
+    parser.add_argument(
+        "--reset-algo",
+        action="store_true",
+        help="Send command 'ra' to reset onboard DNE algorithm",
+    )
+    parser.add_argument(
+        "--shipping-mode",
+        action="store_true",
+        help="Send command 'sm' to put device in shipping mode",
+    )
+    parser.add_argument(
+        "--download-storage",
+        action="store_true",
+        help="Download all offline recorded session records from flash",
+    )
     return parser
 
 
@@ -354,6 +384,7 @@ def ring_monitor() -> int:
                 log_dir=args.log_dir,
                 participant_id=args.participant_id,
                 csv_layout=args.csv_layout,
+                initial_mode=_MODE_MAP[args.mode],
             )
         return asyncio.run(_run_monitor_cli(args))
     except KeyboardInterrupt:
@@ -365,7 +396,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
     from rich.console import Console
     from rich.live import Live
 
-    console = Console(force_terminal=True)
+    console = Console(force_terminal=True, emoji=False)
     box_style = None
     if sys.platform == "win32" and not _stdout_encoding_is_utf8():
         from rich import box
@@ -401,6 +432,80 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
             await connector.disconnect()
         return 0
 
+    if (
+        args.check_flash
+        or args.sync_time
+        or args.reset_algo
+        or args.shipping_mode
+        or args.download_storage
+    ):
+        connector = NuanicConnector(target_address=args.ring_addr)
+        if not await connector.connect():
+            console.print("[red][FAIL] Could not connect to ring[/red]")
+            return 1
+        try:
+            if args.sync_time:
+                res = await connector.sync_time()
+                console.print(
+                    "[green][SUCCESS] Time synchronized:[/green] True"
+                    if res
+                    else "[red][FAIL] Time sync failed[/red]"
+                )
+            if args.reset_algo:
+                res = await connector.send_command("ra")
+                console.print(
+                    "[green][SUCCESS] DNE Algorithm reset:[/green] True"
+                    if res
+                    else "[red][FAIL] Reset algo failed[/red]"
+                )
+            if args.shipping_mode:
+                res = await connector.send_command("sm")
+                console.print(
+                    "[green][SUCCESS] Sent shipping mode command:[/green] True"
+                    if res
+                    else "[red][FAIL] Shipping mode failed[/red]"
+                )
+            if args.check_flash:
+                usage = await connector.read_storage_usage()
+                fmt = await connector.read_storage_format()
+                if usage:
+                    console.print(
+                        "\n[bold cyan]OFFLINE FLASH MEMORY STATUS:[/bold cyan]"
+                    )
+                    console.print(f"  Total Size     : {usage['size_bytes']} bytes")
+                    console.print(
+                        f"  Used Space     : {usage['used_bytes']} bytes ({usage['percent_used']:.1f}%)"
+                    )
+                    console.print(
+                        f"  Available      : {usage['available_bytes']} bytes"
+                    )
+                    fmt_str = (
+                        "Standby/None"
+                        if fmt == 0
+                        else (
+                            "Raw EDA (14B)"
+                            if fmt == 1
+                            else "Nuanic Algorithm DNE (22B)"
+                        )
+                    )
+                    console.print(f"  Storage Format : {fmt} ({fmt_str})\n")
+                else:
+                    console.print("[red][FAIL] Could not read storage usage[/red]")
+            if args.download_storage:
+                console.print(
+                    "[cyan]Downloading offline session records from flash memory...[/cyan]"
+                )
+                records = await connector.download_storage()
+                console.print(
+                    f"[green]Downloaded {len(records)} record(s) from flash storage.[/green]"
+                )
+                if records:
+                    console.print(f"Sample first record: {records[0]}")
+                    console.print(f"Sample last record : {records[-1]}")
+        finally:
+            await connector.disconnect()
+        return 0
+
     if args.nuanic_export:
         args.csv_layout = "nuanic"
 
@@ -420,13 +525,6 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         return 0
 
     # Waveform check is intercepted synchronously in ring_monitor() to avoid Matplotlib GUI thread issues
-
-    _MODE_MAP = {
-        "live": MODE_LIVE,
-        "research": MODE_RESEARCH,
-        "raw_eda": MODE_RAW_EDA,
-        "standby": MODE_STANDBY,
-    }
 
     monitor = NuanicMonitor(
         log_dir=args.log_dir,

@@ -13,6 +13,7 @@ import inspect
 import platform
 import struct
 import subprocess
+import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from bleak import BleakClient, BleakGATTCharacteristic
@@ -28,11 +29,13 @@ from nuanic_ring._scanner import (
 class NuanicConnector:
     """Handles BLE connections to one or many Nuanic/Moodmetric rings."""
 
-    # ── Operational modes (write to CONFIG_3 / STORAGE_FORMAT) ──
-    MODE_STANDBY = 0x00  # Physiology OFF, IMU + finger-detect stay active
-    MODE_RAW_EDA = 0x01  # Raw EDA only on 42dcb71b (no onboard DNE)
-    MODE_LIVE = 0x02  # Raw EDA + DNE on d306262b — short/responsive filter
-    MODE_RESEARCH = 0x03  # Raw EDA + DNE on d306262b — long/conservative filter
+    # ── Operational modes (write to STORAGE_FORMAT / CONFIG_3) ──
+    MODE_STANDBY = 0x00  # Standby / None (Physiology OFF, IMU + finger-detect active)
+    MODE_RAW_EDA = 0x01  # Format 1: Unprocessed Raw EDA on 42dcb71b (<HQI, 14-byte)
+    MODE_LIVE = (
+        0x02  # Format 2: Preprocessed Instant EDA + DNE on d306262b (<Qii, 16-byte)
+    )
+    MODE_RESEARCH = 0x03  # Undocumented/legacy variant of Format 2 (Preprocessed + DNE)
 
     # Backward-compat aliases
     MODE_ALGO = MODE_RAW_EDA
@@ -46,24 +49,47 @@ class NuanicConnector:
         0x03: "research",
     }
 
-    # GATT UUIDs (Verified best-fit interpretations as of 2026-07)
-    STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # Off-finger / on-finger state indicator stream
-    ALGO_1MIN_UUID = (
-        "42dcb71b-1817-43bd-8ea3-7272780a1c9f"  # 1-minute Algo/DNE historical stream
+    # GATT UUIDs (Empirically verified & decoded)
+    NUANIC_SERVICE_UUID = "5491faaf-b0c2-4167-8f3d-bc6b31db69e7"
+    STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # Read/Notify state indicator: 0=init, 1=off, 2=on, 3=docked
+    SAMPLE_RATE_UUID = (
+        "516b0fb6-d861-4619-9dd0-0105e8b85128"  # Read/Write: 3, 4, 6, 8, 12, 16 Hz
     )
-    LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # High-rate physiological stream (raw EDA + Stress Index)
-    PHYSIOLOGY_UUID = LIVE_DNA_UUID
-    IMU_BATCH_UUID = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # Bulk motion / IMU batch stream (14-sample batches at ~1Hz)
-    SAMPLE_RATE_UUID = "516b0fb6-d861-4619-9dd0-0105e8b85128"  # CONFIG_1 — sample rate (1-byte, 3–16 Hz)
-    STORAGE_FORMAT_UUID = "3cce21a7-e602-4e02-8c52-1e0366c1c846"  # CONFIG_3 — master mode switch (0x00–0x03)
-    BUFFER_UUID = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"  # Offline flash storage buffer
+    REALTIME_UUID = "dc9c31a7-fbd3-467a-8777-10900c423d3b"  # Write device time (8-byte Unix timestamp ms LE)
+    LIVE_DNE_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # Notify/Read 16B: timestamp, instant indicator, DNE
+    LIVE_EDA_UUID = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"  # Notify 14B: boot_count, timestamp, eda_ohm
+    STORAGE_UUID = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"  # Read MTU chunks for offline session data
+    STORAGE_FORMAT_UUID = "3cce21a7-e602-4e02-8c52-1e0366c1c846"  # Read/Write: 0=None, 1=Raw EDA, 2=Nuanic Algo
+    STORAGE_REWIND_UUID = "2175c13f-60e4-4de5-80af-0d06f1b54880"  # Write 10B struct to rewind flash pointer
+    STORAGE_USAGE_UUID = (
+        "d78e5bd8-53d6-4fc3-bc98-03b8cd71684b"  # Read 8B: size, used bytes
+    )
+    COMMAND_UUID = (
+        "741f0d15-cc3d-4715-a9fb-a5a6bccebc50"  # Write 2 ASCII bytes: "sm" or "ra"
+    )
+    IMU_BATCH_UUID = (
+        "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # Bulk motion / IMU batch stream
+    )
     BATTERY_UUID = (
         "00002a19-0000-1000-8000-00805f9b34fb"  # Standard BLE Battery Service
     )
 
+    # Backward compatibility aliases
+    ALGO_1MIN_UUID = LIVE_EDA_UUID
+    LIVE_DNA_UUID = LIVE_DNE_UUID
+    PHYSIOLOGY_UUID = LIVE_DNE_UUID
+    BUFFER_UUID = STORAGE_UUID
+    STRESS_STREAM_UUID = LIVE_DNE_UUID
+    RAW_EDA_STREAM = LIVE_EDA_UUID
+    RATE_CONTROL_UUID = SAMPLE_RATE_UUID
+    STREAM_SELECT_UUID = STORAGE_FORMAT_UUID
+
     # Core aliases used across the existing telemetry code.
     BATTERY_CHARACTERISTIC = BATTERY_UUID
     IMU_CHARACTERISTIC = IMU_BATCH_UUID
+    # ponytail: legacy alias — points to STATE_UUID (on/off-finger), NOT the
+    # raw EDA stream.  The actual raw EDA stream is LIVE_EDA_UUID (42dcb71b).
+    # Code that wants real raw EDA should use subscribe_to_live_eda() instead.
     RAW_EDA_CHARACTERISTIC = STATE_UUID
     ALGO_1MIN_CHARACTERISTIC = ALGO_1MIN_UUID
     STRESS_CHARACTERISTIC = PHYSIOLOGY_UUID
@@ -414,6 +440,17 @@ class NuanicConnector:
                 self.device = device
                 self.target_address = address
                 _save_last_address(address)
+
+                # Automatic boot time sync to resolve 1970 timestamp epoch
+                try:
+                    await self.sync_time(address=address)
+                except Exception as sync_exc:
+                    _log.debug(
+                        "Automatic clock sync on boot failed for %s: %s",
+                        address,
+                        sync_exc,
+                    )
+
                 return True
             except asyncio.CancelledError:
                 try:
@@ -766,8 +803,8 @@ class NuanicConnector:
         """Switch the ring's operational mode.
 
         Args:
-            mode: One of ``MODE_STANDBY`` (0x00), ``MODE_ALGO`` (0x01),
-                  ``MODE_EDA`` (0x02), or ``MODE_EDA_VARIANT`` (0x03).
+            mode: One of ``MODE_STANDBY`` (0x00), ``MODE_RAW_EDA`` (0x01),
+                  ``MODE_LIVE`` (0x02), or ``MODE_RESEARCH`` (0x03).
             address: Target ring MAC, or the default client if omitted.
 
         Returns:
@@ -830,3 +867,165 @@ class NuanicConnector:
         except Exception as exc:
             _log.debug("read_buffer: %s", exc)
             return None
+
+    async def sync_time(
+        self, timestamp_ms: Optional[int] = None, address: Optional[str] = None
+    ) -> bool:
+        """Synchronize real absolute time with the ring's REALTIME register.
+
+        Must be called after each boot so measurement timestamps start from real time
+        instead of 1970.
+        """
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            _log.warning("sync_time: not connected")
+            return False
+        if timestamp_ms is None:
+            timestamp_ms = int(time.time() * 1000)
+        payload = struct.pack("<Q", int(timestamp_ms))
+        try:
+            await client.write_gatt_char(self.REALTIME_UUID, payload)
+            _log.info("sync_time: synchronized ring clock to %d ms", timestamp_ms)
+            return True
+        except Exception as exc:
+            _log.error("sync_time failed: %s", exc)
+            return False
+
+    async def read_storage_usage(
+        self, address: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Read flash storage status from the STORAGE_USAGE register.
+
+        Returns:
+            Dict containing 'size_bytes', 'used_bytes', 'available_bytes', and 'percent_used'.
+        """
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            return None
+        try:
+            data = await client.read_gatt_char(self.STORAGE_USAGE_UUID)
+            if len(data) < 8:
+                return None
+            size, used = struct.unpack("<II", data[:8])
+            return {
+                "size_bytes": size,
+                "used_bytes": used,
+                "available_bytes": max(0, size - used),
+                "percent_used": (used / size * 100.0) if size > 0 else 0.0,
+            }
+        except Exception as exc:
+            _log.debug("read_storage_usage: %s", exc)
+            return None
+
+    async def rewind_storage(
+        self,
+        boot_count: int,
+        timestamp_ms: int = 0,
+        address: Optional[str] = None,
+    ) -> bool:
+        """Rewind internal storage reading pointer for development testing."""
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            return False
+        payload = struct.pack("<HQ", int(boot_count), int(timestamp_ms))
+        try:
+            await client.write_gatt_char(self.STORAGE_REWIND_UUID, payload)
+            _log.info("rewind_storage: boot=%d, timestamp=%d", boot_count, timestamp_ms)
+            return True
+        except Exception as exc:
+            _log.error("rewind_storage failed: %s", exc)
+            return False
+
+    async def send_command(self, cmd: str, address: Optional[str] = None) -> bool:
+        """Send a 2-ASCII-byte command to the device COMMAND register.
+
+        Valid commands:
+            "sm": Put device to shipping mode (disconnects battery until docked).
+            "ra": Reset onboard DNE algorithm.
+        """
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            return False
+        if len(cmd) != 2:
+            _log.error("send_command: command must be exactly 2 characters")
+            return False
+        try:
+            await client.write_gatt_char(self.COMMAND_UUID, cmd.encode("ascii"))
+            _log.info("send_command: sent '%s'", cmd)
+            return True
+        except Exception as exc:
+            _log.error("send_command('%s') failed: %s", cmd, exc)
+            return False
+
+    async def read_storage_format(self, address: Optional[str] = None) -> Optional[int]:
+        """Read the active storage format from STORAGE_FORMAT register (0, 1, or 2)."""
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            return None
+        try:
+            data = await client.read_gatt_char(self.STORAGE_FORMAT_UUID)
+            if data and len(data) >= 1:
+                return data[0]
+            return None
+        except Exception as exc:
+            _log.debug("read_storage_format: %s", exc)
+            return None
+
+    async def download_storage(
+        self,
+        format_type: Optional[int] = None,
+        address: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Download all offline recorded session records from flash memory."""
+        if format_type is None:
+            format_type = await self.read_storage_format(address)
+            if format_type not in (1, 2):
+                format_type = 2  # default to DNE format if unknown
+
+        records = []
+        item_size = 14 if format_type == 1 else 22
+        buffer_bytes = bytearray()
+
+        while True:
+            chunk = await self.read_buffer(address)
+            if not chunk or len(chunk) == 0:
+                break
+            buffer_bytes.extend(chunk)
+
+            while len(buffer_bytes) >= item_size:
+                record_data = bytes(buffer_bytes[:item_size])
+                del buffer_bytes[:item_size]
+
+                if format_type == 1:
+                    boot_count, timestamp_ms, eda_ohm = struct.unpack(
+                        "<HQI", record_data
+                    )
+                    records.append(
+                        {
+                            "format": "EDA",
+                            "boot_count": boot_count,
+                            "timestamp_ms": timestamp_ms,
+                            "eda_ohm": eda_ohm,
+                            "resistance_kohm": eda_ohm / 1000.0,
+                            "conductance_us": (
+                                (1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0
+                            ),
+                        }
+                    )
+                elif format_type == 2:
+                    boot_count, timestamp_ms, srrn, srl, dne = struct.unpack(
+                        "<HQiii", record_data
+                    )
+                    records.append(
+                        {
+                            "format": "DNE",
+                            "boot_count": boot_count,
+                            "timestamp_ms": timestamp_ms,
+                            "srrn": srrn,
+                            "srl": srl,
+                            "dne": dne,
+                        }
+                    )
+            await asyncio.sleep(0.05)
+
+        return records
