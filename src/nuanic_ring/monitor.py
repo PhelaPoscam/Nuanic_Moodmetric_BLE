@@ -1111,7 +1111,9 @@ class NuanicMonitor:
             label = NuanicConnector.MODE_LABELS.get(self.initial_mode & 0xFF, "?")
             _log.info(
                 "[MODE] Setting ring %s to 0x%02X (%s) — expect 60s calibration silence",
-                mac, self.initial_mode & 0xFF, label,
+                mac,
+                self.initial_mode & 0xFF,
+                label,
             )
             await self.connector.set_mode(self.initial_mode, address=mac)
 

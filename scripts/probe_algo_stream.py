@@ -41,12 +41,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--ring-addr", default=None, help="BLE MAC address")
     p.add_argument(
-        "--capture-duration", type=float, default=120.0,
-        help="Seconds to capture AFTER the 60s calibration (default: 120)."
+        "--capture-duration",
+        type=float,
+        default=120.0,
+        help="Seconds to capture AFTER the 60s calibration (default: 120).",
     )
     p.add_argument(
-        "--out-dir", default="data/algo_probes",
-        help="Output directory for CSV (default: data/algo_probes)."
+        "--out-dir",
+        default="data/algo_probes",
+        help="Output directory for CSV (default: data/algo_probes).",
     )
     return p.parse_args()
 
@@ -135,8 +138,10 @@ async def main() -> int:
             recent = pkt_count - last_report
             last_report = pkt_count
             phase = "CALIBRATING" if elapsed < 60 else "CAPTURING"
-            print(f"  t={elapsed:5.1f}s | {phase} | "
-                  f"pkts this window: {recent:3d} | total: {pkt_count:4d}")
+            print(
+                f"  t={elapsed:5.1f}s | {phase} | "
+                f"pkts this window: {recent:3d} | total: {pkt_count:4d}"
+            )
 
         # ── Cleanup ────────────────────────────────────────────────
         try:
@@ -160,16 +165,23 @@ async def main() -> int:
 
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "elapsed_s", "unix_time",
-                "raw_hex",
-                "header_u16",
-                "clock_u32",
-                "ctx_u32",
-                "mystery_u32", "mystery_i32", "mystery_f32",
-                "mystery_i16_0", "mystery_i16_1",
-                "mystery_u16_0", "mystery_u16_1",
-            ])
+            writer.writerow(
+                [
+                    "elapsed_s",
+                    "unix_time",
+                    "raw_hex",
+                    "header_u16",
+                    "clock_u32",
+                    "ctx_u32",
+                    "mystery_u32",
+                    "mystery_i32",
+                    "mystery_f32",
+                    "mystery_i16_0",
+                    "mystery_i16_1",
+                    "mystery_u16_0",
+                    "mystery_u16_1",
+                ]
+            )
 
             for t, data in packets:
                 elapsed = t - t0
@@ -179,14 +191,23 @@ async def main() -> int:
                 mystery = data[10:14]
                 d = decode_mystery(mystery)
 
-                writer.writerow([
-                    f"{elapsed:.3f}", f"{t:.6f}",
-                    data.hex(),
-                    header, clock, ctx,
-                    d["u32"], d["i32"], d["f32"],
-                    d["i16_0"], d["i16_1"],
-                    d["u16_0"], d["u16_1"],
-                ])
+                writer.writerow(
+                    [
+                        f"{elapsed:.3f}",
+                        f"{t:.6f}",
+                        data.hex(),
+                        header,
+                        clock,
+                        ctx,
+                        d["u32"],
+                        d["i32"],
+                        d["f32"],
+                        d["i16_0"],
+                        d["i16_1"],
+                        d["u16_0"],
+                        d["u16_1"],
+                    ]
+                )
 
         # ── Summary statistics ─────────────────────────────────────
         print_header("SUMMARY STATISTICS")
@@ -211,8 +232,10 @@ async def main() -> int:
             if not vals:
                 return
             unique = len(set(vals))
-            print(f"  {name:12s} | min={min(vals):12d} | max={max(vals):12d} | "
-                  f"unique={unique:5d} | first={vals[0]} | last={vals[-1]}")
+            print(
+                f"  {name:12s} | min={min(vals):12d} | max={max(vals):12d} | "
+                f"unique={unique:5d} | first={vals[0]} | last={vals[-1]}"
+            )
 
         stats("uint32", u32_vals)
         stats("i16_0", i16_0_vals)
@@ -222,19 +245,26 @@ async def main() -> int:
 
         # Clock diagnostics
         if len(clocks) > 1:
-            clock_deltas = [clocks[i] - clocks[i-1] for i in range(1, len(clocks))]
+            clock_deltas = [clocks[i] - clocks[i - 1] for i in range(1, len(clocks))]
             avg_delta = sum(clock_deltas) / len(clock_deltas)
-            print(f"\n  Clock deltas: min={min(clock_deltas)} max={max(clock_deltas)} "
-                  f"avg={avg_delta:.1f}")
+            print(
+                f"\n  Clock deltas: min={min(clock_deltas)} max={max(clock_deltas)} "
+                f"avg={avg_delta:.1f}"
+            )
             if avg_delta > 0:
-                print(f"  Effective rate: {1.0 / (avg_delta / 1000):.1f} Hz "
-                      f"(assuming clock is ms)")
+                print(
+                    f"  Effective rate: {1.0 / (avg_delta / 1000):.1f} Hz "
+                    f"(assuming clock is ms)"
+                )
 
         # Heuristic: which decoding looks like DNE (0–100 range)?
         print_header("DNE RANGE HEURISTIC (looking for 0–100 values)")
         for label, vals in [
-            ("uint32", u32_vals), ("i16_0", i16_0_vals), ("i16_1", i16_1_vals),
-            ("u16_0", u16_0_vals), ("u16_1", u16_1_vals),
+            ("uint32", u32_vals),
+            ("i16_0", i16_0_vals),
+            ("i16_1", i16_1_vals),
+            ("u16_0", u16_0_vals),
+            ("u16_1", u16_1_vals),
         ]:
             in_range = sum(1 for v in vals if 0 <= v <= 100)
             pct = 100 * in_range / len(vals) if vals else 0

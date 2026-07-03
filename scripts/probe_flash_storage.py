@@ -48,12 +48,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--ring-addr", default=None, help="BLE MAC address")
     p.add_argument(
-        "--stream-duration", type=float, default=90.0,
-        help="Seconds to stream AFTER each 60s calibration (default: 90)."
+        "--stream-duration",
+        type=float,
+        default=90.0,
+        help="Seconds to stream AFTER each 60s calibration (default: 90).",
     )
     p.add_argument(
-        "--out-dir", default="data/flash_probes",
-        help="Output directory for CSV (default: data/flash_probes)."
+        "--out-dir",
+        default="data/flash_probes",
+        help="Output directory for CSV (default: data/flash_probes).",
     )
     return p.parse_args()
 
@@ -116,6 +119,7 @@ async def main() -> int:
                 entry["imu_clock"] = struct.unpack("<I", payload[0:4])[0]
                 entry["imu_ctx"] = struct.unpack("<I", payload[4:8])[0]
             all_packets.append(entry)
+
         return cb
 
     # ── Connect ─────────────────────────────────────────────────────
@@ -137,8 +141,10 @@ async def main() -> int:
 
         # ── Subscribe to all streams ─────────────────────────────────
         for uuid, tag in [
-            (D306_UUID, "d306"), (ALGO_UUID, "42dc"),
-            (STATE_UUID, "3c18"), (IMU_UUID, "468f"),
+            (D306_UUID, "d306"),
+            (ALGO_UUID, "42dc"),
+            (STATE_UUID, "3c18"),
+            (IMU_UUID, "468f"),
         ]:
             try:
                 await connector.client.start_notify(uuid, make_cb(tag))
@@ -173,11 +179,13 @@ async def main() -> int:
         while (elapsed := time.time() - t0) < 60.0:
             await asyncio.sleep(10.0)
             elapsed = time.time() - t0
-            print(f"  calib t={elapsed:5.1f}s | "
-                  f"d306={stream_pkt_counts['d306']:4d} "
-                  f"42dc={stream_pkt_counts['42dc']:4d} "
-                  f"state={stream_pkt_counts['3c18']:4d} "
-                  f"imu={stream_pkt_counts['468f']:4d}")
+            print(
+                f"  calib t={elapsed:5.1f}s | "
+                f"d306={stream_pkt_counts['d306']:4d} "
+                f"42dc={stream_pkt_counts['42dc']:4d} "
+                f"state={stream_pkt_counts['3c18']:4d} "
+                f"imu={stream_pkt_counts['468f']:4d}"
+            )
 
         # Stream window
         pkt_snapshot_02 = stream_pkt_counts.copy()
@@ -186,23 +194,31 @@ async def main() -> int:
         while (elapsed := time.time() - t0) < args.stream_duration:
             await asyncio.sleep(10.0)
             elapsed = time.time() - t0
-            recent = {k: stream_pkt_counts[k] - pkt_snapshot_02[k] for k in stream_pkt_counts}
+            recent = {
+                k: stream_pkt_counts[k] - pkt_snapshot_02[k] for k in stream_pkt_counts
+            }
             # Print latest d306 packet if available
             extra = ""
-            d306_pkts = [p for p in all_packets if p["mode"] == "0x02" and p["stream"] == "d306"]
+            d306_pkts = [
+                p for p in all_packets if p["mode"] == "0x02" and p["stream"] == "d306"
+            ]
             if d306_pkts:
                 last = d306_pkts[-1]
                 extra = f"| last_d306: rawEDA={last.get('raw_eda','?')} DNE={last.get('dne','?')} Ctx={last.get('ctx','?')}"
-            print(f"  stream t={elapsed:5.1f}s | "
-                  f"d306={recent['d306']:4d}(+{recent['d306']}) "
-                  f"42dc={recent['42dc']:4d} "
-                  f"state={recent['3c18']:4d} "
-                  f"imu={recent['468f']:4d} {extra}")
+            print(
+                f"  stream t={elapsed:5.1f}s | "
+                f"d306={recent['d306']:4d}(+{recent['d306']}) "
+                f"42dc={recent['42dc']:4d} "
+                f"state={recent['3c18']:4d} "
+                f"imu={recent['468f']:4d} {extra}"
+            )
 
-        print(f"\n[0x02 TOTAL] d306={stream_pkt_counts['d306']} "
-              f"42dc={stream_pkt_counts['42dc']} "
-              f"state={stream_pkt_counts['3c18']} "
-              f"imu={stream_pkt_counts['468f']}")
+        print(
+            f"\n[0x02 TOTAL] d306={stream_pkt_counts['d306']} "
+            f"42dc={stream_pkt_counts['42dc']} "
+            f"state={stream_pkt_counts['3c18']} "
+            f"imu={stream_pkt_counts['468f']}"
+        )
 
         # ── SWITCH TO STANDBY BRIEFLY ────────────────────────────────
         print_header("INTERMISSION — STANDBY")
@@ -229,11 +245,13 @@ async def main() -> int:
         while (elapsed := time.time() - t0) < 60.0:
             await asyncio.sleep(10.0)
             elapsed = time.time() - t0
-            print(f"  calib t={elapsed:5.1f}s | "
-                  f"d306={stream_pkt_counts['d306']:4d} "
-                  f"42dc={stream_pkt_counts['42dc']:4d} "
-                  f"state={stream_pkt_counts['3c18']:4d} "
-                  f"imu={stream_pkt_counts['468f']:4d}")
+            print(
+                f"  calib t={elapsed:5.1f}s | "
+                f"d306={stream_pkt_counts['d306']:4d} "
+                f"42dc={stream_pkt_counts['42dc']:4d} "
+                f"state={stream_pkt_counts['3c18']:4d} "
+                f"imu={stream_pkt_counts['468f']:4d}"
+            )
 
         # Stream window
         pkt_snapshot_03 = stream_pkt_counts.copy()
@@ -242,22 +260,30 @@ async def main() -> int:
         while (elapsed := time.time() - t0) < args.stream_duration:
             await asyncio.sleep(10.0)
             elapsed = time.time() - t0
-            recent = {k: stream_pkt_counts[k] - pkt_snapshot_03[k] for k in stream_pkt_counts}
+            recent = {
+                k: stream_pkt_counts[k] - pkt_snapshot_03[k] for k in stream_pkt_counts
+            }
             extra = ""
-            d306_pkts = [p for p in all_packets if p["mode"] == "0x03" and p["stream"] == "d306"]
+            d306_pkts = [
+                p for p in all_packets if p["mode"] == "0x03" and p["stream"] == "d306"
+            ]
             if d306_pkts:
                 last = d306_pkts[-1]
                 extra = f"| last_d306: rawEDA={last.get('raw_eda','?')} DNE={last.get('dne','?')} Ctx={last.get('ctx','?')}"
-            print(f"  stream t={elapsed:5.1f}s | "
-                  f"d306={recent['d306']:4d}(+{recent['d306']}) "
-                  f"42dc={recent['42dc']:4d} "
-                  f"state={recent['3c18']:4d} "
-                  f"imu={recent['468f']:4d} {extra}")
+            print(
+                f"  stream t={elapsed:5.1f}s | "
+                f"d306={recent['d306']:4d}(+{recent['d306']}) "
+                f"42dc={recent['42dc']:4d} "
+                f"state={recent['3c18']:4d} "
+                f"imu={recent['468f']:4d} {extra}"
+            )
 
-        print(f"\n[0x03 TOTAL] d306={stream_pkt_counts['d306']} "
-              f"42dc={stream_pkt_counts['42dc']} "
-              f"state={stream_pkt_counts['3c18']} "
-              f"imu={stream_pkt_counts['468f']}")
+        print(
+            f"\n[0x03 TOTAL] d306={stream_pkt_counts['d306']} "
+            f"42dc={stream_pkt_counts['42dc']} "
+            f"state={stream_pkt_counts['3c18']} "
+            f"imu={stream_pkt_counts['468f']}"
+        )
 
         # ── FINAL: Standby + buffer read ─────────────────────────────
         print_header("FINAL — STANDBY + BUFFER CHECK")
@@ -266,8 +292,10 @@ async def main() -> int:
 
         buf_final = await connector.read_buffer()
         buf_final_len = len(buf_final) if buf_final else 0
-        print(f"[BUFFER FINAL] {buf_final_len} bytes "
-              f"(baseline={buf_bl_len}, after_0x02={buf_mid_len})")
+        print(
+            f"[BUFFER FINAL] {buf_final_len} bytes "
+            f"(baseline={buf_bl_len}, after_0x02={buf_mid_len})"
+        )
         if buf_final and buf_final_len > 0:
             (buf_dir / "after_0x03.bin").write_bytes(buf_final)
             print(f"[BUFFER HEX] first 128: {buf_final[:128].hex()}")
@@ -279,26 +307,34 @@ async def main() -> int:
 
         # ── DNE COMPARISON ───────────────────────────────────────────
         print_header("DNE COMPARISON: 0x02 vs 0x03")
-        dne_02 = [p["dne"] for p in all_packets
-                  if p["mode"] == "0x02" and p["stream"] == "d306" and "dne" in p]
-        dne_03 = [p["dne"] for p in all_packets
-                  if p["mode"] == "0x03" and p["stream"] == "d306" and "dne" in p]
+        dne_02 = [
+            p["dne"]
+            for p in all_packets
+            if p["mode"] == "0x02" and p["stream"] == "d306" and "dne" in p
+        ]
+        dne_03 = [
+            p["dne"]
+            for p in all_packets
+            if p["mode"] == "0x03" and p["stream"] == "d306" and "dne" in p
+        ]
 
         def summarize(label, vals):
             if not vals:
                 print(f"  {label}: NO DATA")
                 return
-            print(f"  {label}: n={len(vals)} "
-                  f"min={min(vals)} max={max(vals)} "
-                  f"mean={sum(vals)/len(vals):.1f} "
-                  f"first={vals[0]} last={vals[-1]} "
-                  f"unique={len(set(vals))}")
+            print(
+                f"  {label}: n={len(vals)} "
+                f"min={min(vals)} max={max(vals)} "
+                f"mean={sum(vals)/len(vals):.1f} "
+                f"first={vals[0]} last={vals[-1]} "
+                f"unique={len(set(vals))}"
+            )
 
         summarize("DNE 0x02", dne_02)
         summarize("DNE 0x03", dne_03)
 
         if dne_02 and dne_03:
-            mean_diff = abs((sum(dne_02)/len(dne_02)) - (sum(dne_03)/len(dne_03)))
+            mean_diff = abs((sum(dne_02) / len(dne_02)) - (sum(dne_03) / len(dne_03)))
             print(f"\n  Mean DNE difference: {mean_diff:.2f}")
             if mean_diff < 2.0:
                 print("  → DNE values are NEARLY IDENTICAL between modes")
@@ -316,8 +352,10 @@ async def main() -> int:
             print(f"  → BUFFER GREW by {growth} bytes during 0x03 phase!")
             print(f"  → MODE 0x03 WRITES TO INTERNAL FLASH!")
         elif buf_final_len > buf_bl_len:
-            print(f"  → Buffer has data but grew during 0x02 phase "
-                  f"(or was pre-existing)")
+            print(
+                f"  → Buffer has data but grew during 0x02 phase "
+                f"(or was pre-existing)"
+            )
         else:
             print(f"  → Buffer empty across all phases.")
             print(f"  → Neither mode writes to flash (or flash is auto-cleared).")
@@ -326,8 +364,12 @@ async def main() -> int:
         print_header("REGISTER STATE TRANSITIONS")
         for label in regs_bl:
             vals = []
-            for phase, regs in [("baseline", regs_bl), ("after_0x02", regs_after_02),
-                                ("after_0x03", regs_after_03), ("final", regs_final)]:
+            for phase, regs in [
+                ("baseline", regs_bl),
+                ("after_0x02", regs_after_02),
+                ("after_0x03", regs_after_03),
+                ("final", regs_final),
+            ]:
                 vals.append(f"{phase}={regs.get(label, '?')}")
             print(f"  {label}: {' → '.join(vals)}")
 
@@ -335,10 +377,24 @@ async def main() -> int:
         print_header(f"WRITING CSV: {csv_path}")
         if all_packets:
             # Collect all possible field names across all entries
-            fieldnames = ["unix", "mode", "stream", "hex", "len",
-                          "clock", "ctx", "raw_eda", "dne",
-                          "header", "mystery_u16_0", "mystery_u16_1", "mystery_u32",
-                          "state", "imu_clock", "imu_ctx"]
+            fieldnames = [
+                "unix",
+                "mode",
+                "stream",
+                "hex",
+                "len",
+                "clock",
+                "ctx",
+                "raw_eda",
+                "dne",
+                "header",
+                "mystery_u16_0",
+                "mystery_u16_1",
+                "mystery_u32",
+                "state",
+                "imu_clock",
+                "imu_ctx",
+            ]
             with open(csv_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
