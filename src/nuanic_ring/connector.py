@@ -28,20 +28,39 @@ from nuanic_ring._scanner import (
 class NuanicConnector:
     """Handles BLE connections to one or many Nuanic/Moodmetric rings."""
 
-    # GATT UUIDs (Verified best-fit interpretations as of 2026-06)
+    # ── Operational modes (write to CONFIG_3 / STORAGE_FORMAT) ──
+    MODE_STANDBY = 0x00       # Physiology OFF, IMU + finger-detect stay active
+    MODE_RAW_EDA = 0x01       # Raw EDA only on 42dcb71b (no onboard DNE)
+    MODE_LIVE = 0x02          # Raw EDA + DNE on d306262b — short/responsive filter
+    MODE_RESEARCH = 0x03      # Raw EDA + DNE on d306262b — long/conservative filter
+
+    # Backward-compat aliases
+    MODE_ALGO = MODE_RAW_EDA
+    MODE_EDA = MODE_LIVE
+    MODE_EDA_VARIANT = MODE_RESEARCH
+
+    MODE_LABELS = {
+        0x00: "standby",
+        0x01: "raw_eda",
+        0x02: "live",
+        0x03: "research",
+    }
+
+    # GATT UUIDs (Verified best-fit interpretations as of 2026-07)
     STATE_UUID = "3c180fcc-bfec-4b7c-8e52-1a37f123e449"  # Off-finger / on-finger state indicator stream
     ALGO_1MIN_UUID = (
         "42dcb71b-1817-43bd-8ea3-7272780a1c9f"  # 1-minute Algo/DNE historical stream
     )
-    LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # High-rate physiological stream (raw EDA + Stress Index) at ~16Hz
+    LIVE_DNA_UUID = "d306262b-c8c9-4c4b-9050-3a41dea706e5"  # High-rate physiological stream (raw EDA + Stress Index)
     PHYSIOLOGY_UUID = LIVE_DNA_UUID
     IMU_BATCH_UUID = "468f2717-6a7d-46f9-9eb7-f92aab208bae"  # Bulk motion / IMU batch stream (14-sample batches at ~1Hz)
     SAMPLE_RATE_UUID = (
-        "516b0fb6-d861-4619-9dd0-0105e8b85128"  # Writable config register (proven)
+        "516b0fb6-d861-4619-9dd0-0105e8b85128"  # CONFIG_1 — sample rate (1-byte, 3–16 Hz)
     )
     STORAGE_FORMAT_UUID = (
-        "3cce21a7-e602-4e02-8c52-1e0366c1c846"  # Writable config register
+        "3cce21a7-e602-4e02-8c52-1e0366c1c846"  # CONFIG_3 — master mode switch (0x00–0x03)
     )
+    BUFFER_UUID = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"  # Offline flash storage buffer
     BATTERY_UUID = (
         "00002a19-0000-1000-8000-00805f9b34fb"  # Standard BLE Battery Service
     )
@@ -744,3 +763,76 @@ class NuanicConnector:
             "address": (address or ""),
             "errors": failures,
         }
+
+    # ── Mode & sample-rate control ──────────────────────────────────
+
+    async def set_mode(self, mode: int, address: Optional[str] = None) -> bool:
+        """Switch the ring's operational mode.
+
+        Args:
+            mode: One of ``MODE_STANDBY`` (0x00), ``MODE_ALGO`` (0x01),
+                  ``MODE_EDA`` (0x02), or ``MODE_EDA_VARIANT`` (0x03).
+            address: Target ring MAC, or the default client if omitted.
+
+        Returns:
+            True if the write was acknowledged by the BLE stack.
+
+        Note:
+            **Every mode transition triggers a 60-second silent calibration
+            window.**  Physiological streams will be dead for 60 s after this
+            call.  Writing the mode the ring is already in is a no-op.
+        """
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            _log.warning("set_mode: not connected")
+            return False
+        try:
+            await client.write_gatt_char(
+                self.STORAGE_FORMAT_UUID, bytes([mode & 0xFF])
+            )
+            label = self.MODE_LABELS.get(mode & 0xFF, "unknown")
+            _log.info("set_mode: 0x%02X (%s) — 60s calibration begins", mode & 0xFF, label)
+            return True
+        except Exception as exc:
+            _log.error("set_mode(0x%02X) failed: %s", mode & 0xFF, exc)
+            return False
+
+    async def set_sample_rate(self, hz: int, address: Optional[str] = None) -> bool:
+        """Set the physiological stream sample rate via CONFIG_1.
+
+        Args:
+            hz: Target rate in Hz (clamped to 3–16, the ring's known range).
+            address: Target ring MAC, or the default client if omitted.
+
+        Returns:
+            True if the write was acknowledged.
+        """
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            _log.warning("set_sample_rate: not connected")
+            return False
+        hz = max(3, min(16, int(hz)))
+        try:
+            await client.write_gatt_char(self.SAMPLE_RATE_UUID, bytes([hz]))
+            _log.info("set_sample_rate: %d Hz", hz)
+            return True
+        except Exception as exc:
+            _log.error("set_sample_rate(%d) failed: %s", hz, exc)
+            return False
+
+    async def read_buffer(
+        self, address: Optional[str] = None
+    ) -> Optional[bytes]:
+        """Read the offline flash storage buffer (``7c3b82e7``).
+
+        Returns raw bytes, or None if the read fails / buffer is empty.
+        """
+        client = self.get_client(address)
+        if not client or not getattr(client, "is_connected", False):
+            return None
+        try:
+            data = await client.read_gatt_char(self.BUFFER_UUID)
+            return bytes(data)
+        except Exception as exc:
+            _log.debug("read_buffer: %s", exc)
+            return None

@@ -138,6 +138,7 @@ class NuanicMonitor:
         allow_reset_bt: bool = False,
         participant_id: Optional[str] = None,
         raw_signal: bool = False,
+        initial_mode: Optional[int] = None,
     ):
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
@@ -160,6 +161,7 @@ class NuanicMonitor:
         self.warmup_delay = warmup_delay
         self.allow_reset_bt = allow_reset_bt
         self.raw_signal = raw_signal
+        self.initial_mode = initial_mode
 
         self.session_timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
 
@@ -1104,6 +1106,14 @@ class NuanicMonitor:
             state.rate_control_status = "not-requested"
         else:
             state.rate_control_status = "not-configured"
+
+        if self.initial_mode is not None:
+            label = NuanicConnector.MODE_LABELS.get(self.initial_mode & 0xFF, "?")
+            _log.info(
+                "[MODE] Setting ring %s to 0x%02X (%s) — expect 60s calibration silence",
+                mac, self.initial_mode & 0xFF, label,
+            )
+            await self.connector.set_mode(self.initial_mode, address=mac)
 
         streams_ok = await self._subscribe_device_streams(mac)
         if not streams_ok:

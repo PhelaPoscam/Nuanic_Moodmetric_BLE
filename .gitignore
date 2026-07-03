@@ -72,6 +72,8 @@ venv.bak/
 # Project-specific: session data (physiological recordings - never commit)
 data/ring_logs/
 data/diagnostic_test/
+data/algo_probes/
+data/flash_probes/
 
 # Pre-refactor source backup (transitional artifact, kept out of working tree)
 backup_nuanic/
@@ -79,6 +81,7 @@ backup_nuanic/
 # Project-specific: temp/dev scripts and dump files
 temp_patch.py
 tests_output.txt
+pytest_output.txt
 architecture_audit_and_roadmap.md
 diagnostic_capture_test.py
 

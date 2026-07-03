@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-A Python library for connecting, monitoring, and capturing raw electrodermal activity (EDA) and IMU waveforms from **Nuanic** and legacy **Moodmetric** BLE rings. Includes a real-time **Moodmetric-like Arousal Scoring** pipeline and a live Matplotlib dashboard.
+A Python library for connecting, monitoring, and capturing raw electrodermal activity (EDA) and IMU waveforms from **Nuanic** and legacy **Moodmetric** BLE rings. Includes **operational mode switching** (Standby / Raw EDA / Live / Research), sample rate control (3–16 Hz), real-time **DNE arousal scoring**, and a live Matplotlib dashboard.
 
 ---
 
@@ -40,8 +40,8 @@ pip install -e ".[dev]"
 ### 2. Connect & Monitor
 
 ```bash
-# Start standard monitoring (lazy-logs session data to CSV)
-nuanic-ring-monitor --calibration-seconds 60
+# Start monitoring in Live mode (responsive DNE) at 16 Hz
+nuanic-ring-monitor --calibration-seconds 60 --target-hz 16
 
 # Launch live dashboard visualization
 nuanic-ring-monitor --waveform
@@ -71,19 +71,38 @@ nuanic-ring-monitor --ring-addrs MAC1,MAC2 --target-hz 16 --reset-bt
 
 ```python
 import asyncio
-from nuanic_ring.monitor import NuanicMonitor
+from nuanic_ring import NuanicConnector, MODE_LIVE, MODE_RAW_EDA, MODE_STANDBY
 
 async def run_sensor():
-    # Initialize monitor with a 60-second baseline calibration window
-    monitor = NuanicMonitor(calibration_seconds=60)
-    
-    # Run the monitor for 120 seconds
-    await monitor.run(duration_seconds=120)
+    connector = NuanicConnector()
+    await connector.connect()
+
+    # Set operational mode (always triggers a 60s calibration window)
+    await connector.set_mode(MODE_LIVE)       # Raw EDA + responsive DNE score
+    await connector.set_sample_rate(16)       # 3–16 Hz
+
+    # Subscribe to streams
+    # ... use connector.subscribe_to_stress(callback) etc.
+
+    await connector.disconnect()
 
 asyncio.run(run_sensor())
 ```
 
-For advanced multi-ring orchestration, see [Python API Usage in the Master Guide](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/ring_master_guide.md#python-api-usage).
+### Operational Modes
+
+The ring has 4 modes controlled via `CONFIG_3` register:
+
+| Constant | Value | Stream | What you get |
+|---|---|---|---|
+| `MODE_STANDBY` | `0x00` | — | Physiology OFF (IMU + finger-detect stay active) |
+| `MODE_RAW_EDA` | `0x01` | `42dcb71b` (14-byte) | Raw EDA only — **no onboard DNE**. Use when doing your own DSP. |
+| `MODE_LIVE` | `0x02` | `d306262b` (16-byte) | Raw EDA + DNE score. **Short filter** — responsive to changes. |
+| `MODE_RESEARCH` | `0x03` | `d306262b` (16-byte) | Raw EDA + DNE score. **Long filter** — stable, reproducible. |
+
+> ⚠️ Every mode transition triggers a **60-second silent calibration window**. All physiological BLE streams are muted during this period. Writing the same mode the ring is already in is a no-op.
+
+For the full reverse-engineering breakdown, see [Ring Reverse-Engineering Report](docs/ring_reverse_engineering_report.md).
 
 ---
 
