@@ -7,7 +7,13 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from nuanic_ring.connector import NuanicConnector
+from nuanic_ring import (
+    MODE_LIVE,
+    MODE_RAW_EDA,
+    MODE_RESEARCH,
+    MODE_STANDBY,
+    NuanicConnector,
+)
 from nuanic_ring.discover_services import run_diagnostics
 from nuanic_ring.monitor import NuanicMonitor
 
@@ -309,6 +315,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--scan-timeout", type=float, default=6.0)
     parser.add_argument("--scan-attempts", type=int, default=3)
+    parser.add_argument(
+        "--mode",
+        choices=["live", "research", "raw_eda", "standby"],
+        default="live",
+        help="Ring operational mode (default: live)",
+    )
     parser.add_argument("--waveform", action="store_true")
     parser.add_argument("--markers", action="store_true")
     parser.add_argument("--marker-hotkey", action="append", default=[])
@@ -409,6 +421,13 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
 
     # Waveform check is intercepted synchronously in ring_monitor() to avoid Matplotlib GUI thread issues
 
+    _MODE_MAP = {
+        "live": MODE_LIVE,
+        "research": MODE_RESEARCH,
+        "raw_eda": MODE_RAW_EDA,
+        "standby": MODE_STANDBY,
+    }
+
     monitor = NuanicMonitor(
         log_dir=args.log_dir,
         imu_refresh_packets=args.imu_refresh,
@@ -425,6 +444,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         allow_reset_bt=args.reset_bt,
         participant_id=args.participant_id,
         raw_signal=args.raw,
+        initial_mode=_MODE_MAP[args.mode],
     )
 
     started = await monitor.start_multi(

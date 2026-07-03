@@ -27,7 +27,10 @@ try:
         print_header,
         resolve_profile,
     )
-    from nuanic_ring.moodmetric_parser import decode_moodmetric_payload, summarize_decoded_payload
+    from nuanic_ring.moodmetric_parser import (
+        decode_moodmetric_payload,
+        summarize_decoded_payload,
+    )
     from nuanic_ring.ring_profiles import (
         MOODMETRIC_PROFILE,
         NUANIC_PROFILE,
@@ -44,8 +47,8 @@ except ModuleNotFoundError:
 # Target probe registers
 PROBE_REGISTERS = {
     "config3": "3cce21a7-e602-4e02-8c52-1e0366c1c846",  # CONFIG_3_STORAGE_FORMAT (Read/Write)
-    "write1": "2175c13f-60e4-4de5-80af-0d06f1b54880",   # WRITE_1_COMMAND_TRIGGER (Write-Only)
-    "sample_rate": "516b0fb6-d861-4619-9dd0-0105e8b85128", # CONFIG_1_SAMPLE_RATE (Read/Write)
+    "write1": "2175c13f-60e4-4de5-80af-0d06f1b54880",  # WRITE_1_COMMAND_TRIGGER (Write-Only)
+    "sample_rate": "516b0fb6-d861-4619-9dd0-0105e8b85128",  # CONFIG_1_SAMPLE_RATE (Read/Write)
 }
 
 # Candidate hex button / mode switch patterns
@@ -72,7 +75,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--register",
-        choices=list(PROBE_REGISTERS.keys()) + ["3cce21a7-e602-4e02-8c52-1e0366c1c846", "2175c13f-60e4-4de5-80af-0d06f1b54880"],
+        choices=list(PROBE_REGISTERS.keys())
+        + [
+            "3cce21a7-e602-4e02-8c52-1e0366c1c846",
+            "2175c13f-60e4-4de5-80af-0d06f1b54880",
+        ],
         default="config3",
         help="Register to write: 'config3' (STORAGE_FORMAT 3cce...), 'write1' (2175...), or full UUID.",
     )
@@ -121,13 +128,17 @@ async def read_register_states(client) -> Dict[str, str]:
     return states
 
 
-async def probe_single_command(client, reg_uuid: str, pat_bytes: bytes, duration: float, report_interval: float):
+async def probe_single_command(
+    client, reg_uuid: str, pat_bytes: bytes, duration: float, report_interval: float
+):
     print_header("1. STREAM SUBSCRIPTION & BASELINE")
     resolved_profile = resolve_profile(client, "auto")
     print(f"[PROFILE] Active Profile: {resolved_profile.upper()}")
 
     notify_uuids = notify_uuids_for_profile(resolved_profile)
-    stream_stats: Dict[str, NotifyStats] = {u.lower(): NotifyStats() for u in notify_uuids}
+    stream_stats: Dict[str, NotifyStats] = {
+        u.lower(): NotifyStats() for u in notify_uuids
+    }
     window_stats: Dict[str, int] = {u.lower(): 0 for u in notify_uuids}
 
     def make_cb(uuid_str: str):
@@ -136,6 +147,7 @@ async def probe_single_command(client, reg_uuid: str, pat_bytes: bytes, duration
             key = uuid_str.lower()
             stream_stats[key].add(payload)
             window_stats[key] += 1
+
         return cb
 
     active_uuids = []
@@ -161,8 +173,10 @@ async def probe_single_command(client, reg_uuid: str, pat_bytes: bytes, duration
         print(f"  Baseline {u[:8]}... : {st.count} pkts ({st.freq_hz():.2f} Hz)")
 
     # Execute Single Mode-Switch Write
-    print_header(f"2. EXECUTING MODE SWITCH\nTarget Register: {reg_uuid}\nCommand Pattern: {pat_bytes.hex().upper()}")
-    
+    print_header(
+        f"2. EXECUTING MODE SWITCH\nTarget Register: {reg_uuid}\nCommand Pattern: {pat_bytes.hex().upper()}"
+    )
+
     # Clear stats for post-write window
     for u in stream_stats:
         stream_stats[u] = NotifyStats()
@@ -171,7 +185,9 @@ async def probe_single_command(client, reg_uuid: str, pat_bytes: bytes, duration
     write_start_time = time.time()
     try:
         await client.write_gatt_char(reg_uuid, pat_bytes)
-        print(f"[WRITE OK] Successfully sent command {pat_bytes.hex().upper()} at t=0.0s")
+        print(
+            f"[WRITE OK] Successfully sent command {pat_bytes.hex().upper()} at t=0.0s"
+        )
     except Exception as exc:
         print(f"[WRITE FAIL] Failed to write {pat_bytes.hex().upper()}: {exc}")
         return
@@ -181,7 +197,9 @@ async def probe_single_command(client, reg_uuid: str, pat_bytes: bytes, duration
 
     # Long Observation Window for Algorithm Reset & Calibration
     print_header(f"3. OBSERVING RING RESET & STREAM BEHAVIOR ({duration}s)")
-    print(f"Monitoring every {report_interval}s to observe calibration stabilization and stream activation...\n")
+    print(
+        f"Monitoring every {report_interval}s to observe calibration stabilization and stream activation...\n"
+    )
 
     elapsed = 0.0
     while elapsed < duration:
@@ -197,11 +215,18 @@ async def probe_single_command(client, reg_uuid: str, pat_bytes: bytes, duration
             window_stats[u.lower()] = 0  # reset chunk counter
 
             if st.count > 0:
-                print(f"  * {u[:8]}... | Rate: {win_hz:5.2f} Hz (Total: {st.count:4d})", end="")
-                
+                print(
+                    f"  * {u[:8]}... | Rate: {win_hz:5.2f} Hz (Total: {st.count:4d})",
+                    end="",
+                )
+
                 # Detailed decoding of latest packet
                 last_pkt = st.last_packet
-                if u.lower() == "d306262b-c8c9-4c4b-9050-3a41dea706e5" and last_pkt and len(last_pkt) == 16:
+                if (
+                    u.lower() == "d306262b-c8c9-4c4b-9050-3a41dea706e5"
+                    and last_pkt
+                    and len(last_pkt) == 16
+                ):
                     ctx = struct.unpack("<I", last_pkt[4:8])[0]
                     eda = struct.unpack("<I", last_pkt[8:12])[0]
                     dne = struct.unpack("<I", last_pkt[12:16])[0]
@@ -215,7 +240,9 @@ async def probe_single_command(client, reg_uuid: str, pat_bytes: bytes, duration
                     print(f" => Hex: {last_pkt.hex()[:24]}")
             else:
                 if u.lower() == "42dcb71b-1817-43bd-8ea3-7272780a1c9f":
-                    print(f"  * {u[:8]}... | SILENT (Waiting for 1-minute Algo historical summary...)")
+                    print(
+                        f"  * {u[:8]}... | SILENT (Waiting for 1-minute Algo historical summary...)"
+                    )
                 else:
                     print(f"  * {u[:8]}... | SILENT (0 pkts)")
 
@@ -243,7 +270,7 @@ async def probe_single_command(client, reg_uuid: str, pat_bytes: bytes, duration
 
 async def main() -> int:
     args = parse_args()
-    
+
     reg_uuid = PROBE_REGISTERS.get(args.register.lower(), args.register)
     pat_bytes = parse_hex_pattern(args.pattern)
 
