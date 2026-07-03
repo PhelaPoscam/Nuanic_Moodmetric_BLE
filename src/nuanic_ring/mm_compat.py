@@ -28,7 +28,15 @@ def clamp(value: float, low: float, high: float) -> float:
 
 
 def convert_eda(raw_value: int):
-    """Convert raw EDA integer into resistance (kOhm) and conductance (uS)."""
+    """Convert raw EDA integer into resistance (kOhm) and conductance (uS).
+
+    .. note::
+       When called with the d306 DNE stream's ``instant`` indicator this
+       produces legacy derived values — the ``instant`` is a preprocessed
+       indicator (normalised around 1e6), **not** a resistance in Ohms.
+       For physically correct resistance/conductance use the raw EDA stream
+       from ``LIVE_EDA_UUID`` (42dcb71b) whose ``eda_ohm`` field *is* Ohms.
+    """
     resistance_kohm = raw_value / 1000.0
     conductance_us = (1000.0 / resistance_kohm) if resistance_kohm > 0 else 0.0
     return resistance_kohm, conductance_us

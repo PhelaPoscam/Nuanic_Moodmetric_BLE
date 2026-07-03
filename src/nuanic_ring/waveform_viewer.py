@@ -24,9 +24,6 @@ from collections import deque
 from typing import TYPE_CHECKING, Any, Sequence
 
 import matplotlib.pyplot as plt
-
-if TYPE_CHECKING:
-    from nuanic_ring.monitor import NuanicMonitor
 import numpy as np
 
 from .connector import NuanicConnector
@@ -90,6 +87,7 @@ class NuanicWaveformViewer:
         target_hz: float | None = None,
         attempt_rate_control: bool = False,
         raw_signal: bool = False,
+        initial_mode: int | None = None,
     ):
         self.connector = NuanicConnector(target_address=ring_addr)
         self.state = WaveformState()
@@ -98,6 +96,7 @@ class NuanicWaveformViewer:
         self.scorer = MMLikeScorer(calibration_seconds=calibration_seconds)
         self.target_hz = target_hz
         self.attempt_rate_control = attempt_rate_control
+        self.initial_mode = initial_mode
         self._running = False
 
     def _live_eda_callback(self, sender, data):
@@ -195,6 +194,10 @@ class NuanicWaveformViewer:
         if self.attempt_rate_control and self.target_hz:
             print(f"[RATE] Requesting {self.target_hz} Hz sample rate...")
             await self.connector.attempt_set_sample_rate(target_hz=int(self.target_hz))
+
+        if self.initial_mode is not None:
+            print(f"[MODE] Setting ring to mode 0x{self.initial_mode & 0xFF:02X}...")
+            await self.connector.set_mode(self.initial_mode)
 
         live_dna_ok = await self.connector.subscribe_to_stress(self._live_dna_callback)
         imu_ok = await self.connector.subscribe_to_imu(self._imu_callback)
@@ -355,7 +358,11 @@ def _run_plot_blocking(
                 arousal_y = list(state.dne_stress_index_wave)[-max_points:]
                 w2_raw = list(state.live_dna_word2)[-max_points:]
 
-                live_dna_packets = state.d306_count
+                live_dna_packets = (
+                    state.d306_count
+                    if hasattr(state, "d306_count") and state.d306_count > 0
+                    else getattr(state, "live_eda_count", 0)
+                )
                 imu_packets = state.imu_batch_count
                 cal_remaining = state.mm_calibration_remaining
                 calibrated = state.mm_calibrated
@@ -387,7 +394,7 @@ def _run_plot_blocking(
                 f"Nuanic DNE:{latest_arousal:.1f}/100\n"
                 f"Conduct.:  {latest_eda_us:.4f} uS\n"
                 f"Motion:    {latest_imu_val:.1f} intensity\n\n"
-                f"D306 Pkts: {live_dna_packets}\n"
+                f"EDA Pkts:  {live_dna_packets}\n"
                 f"IMU Pkts:  {imu_packets}"
             )
 
@@ -421,6 +428,7 @@ async def run_waveform_viewer(
     target_hz: float | None = None,
     attempt_rate_control: bool = False,
     raw_signal: bool = False,
+    initial_mode: int | None = None,
 ) -> int:
     """Run standalone live telemetry plotter.
 
@@ -434,6 +442,7 @@ async def run_waveform_viewer(
         target_hz=target_hz,
         attempt_rate_control=attempt_rate_control,
         raw_signal=raw_signal,
+        initial_mode=initial_mode,
     )
 
     if not await viewer.connect_and_subscribe():
@@ -485,6 +494,7 @@ def run_waveform_viewer_sync(
     log_dir: str = "data/ring_logs",
     participant_id: str | None = None,
     csv_layout: str = "combined",
+    initial_mode: int | None = None,
 ) -> int:
     """Run standalone live telemetry plotter using threads.
 
@@ -502,6 +512,7 @@ def run_waveform_viewer_sync(
         target_hz=target_hz,
         attempt_ring_rate_control=attempt_rate_control,
         raw_signal=raw_signal,
+        initial_mode=initial_mode,
     )
 
     loop = asyncio.new_event_loop()

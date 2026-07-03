@@ -16,19 +16,30 @@ All notable changes to this project are documented in this file.
   - `probe_algo_stream.py` — capture & decode 42dcb71b ALGO stream
   - `probe_flash_storage.py` — dual-mode A/B comparison (0x02 vs 0x03)
 
+### Added (July 2026 firmware update)
+- `sync_time()` — auto-sync on connect + manual CLI `--sync-time` (`dc9c31a7`, `<Q`)
+- `read_storage_usage()` + `--check-flash` CLI (`d78e5bd8`, `<II`)
+- `download_storage()` + `--download-storage` CLI (MTU chunk loop, Format 1 `<HQI` / Format 2 `<HQiii`)
+- `rewind_storage()` — dev-only flash pointer rewind (`2175c13f`, `<HQ`)
+- `send_command("sm"|"ra")` + `--reset-algo` / `--shipping-mode` CLI (`741f0d15`)
+- Live EDA parser for `42dcb71b` (`<HQI`: boot_count, timestamp_ms, eda_ohm)
+- Live DNE parser updated to `<Qii` (timestamp_ms, instant, dne)
+
 ### Discovered
 - **Complete 4-state CONFIG_3 map**: Standby (0x00), Raw EDA (0x01), Live (0x02), Research (0x03)
 - **Universal 60-second calibration law**: every mode transition mutes BLE streams for 60s
 - **0x02 vs 0x03 difference**: DNE filter window — short/responsive vs long/conservative
-- **42dcb71b is raw EDA only** — no onboard DNE computation in Mode 0x01
+- **42dcb71b is raw EDA only** — 14-byte `<HQI`, no onboard DNE computation in Mode 0x01
+- **d306262b is preprocessed DNE** — 16-byte `<Qii` (instant indicator normalised ~1e6 + DNE)
 - **CONFIG_1 controls sample rate universally** (3–16 Hz) across all active modes
-- **CONFIG_2 is a free-running millisecond clock**, not mode-dependent
-- Flash storage trigger not yet found — neither 0x02 nor 0x03 writes to buffer
+- **CONFIG_2 is real-time clock** — write Unix ms (`uint64_t` LE) after each boot
+- **Offline storage protocol** — `7c3b82e7` reads in MTU chunks; Format 1 = EDA, Format 2 = DNE+SRRN+SRL
 
 ### Changed
-- Mode constants renamed to reflect verified behavior (`MODE_ALGO` → `MODE_RAW_EDA`, etc.)
+- Mode constants renamed to reflect firmware spec (`MODE_ALGO` → `MODE_RAW_EDA`, `MODE_EDA` → `MODE_LIVE`, etc.)
 - Old names kept as backward-compat aliases
-- Report updated with verified payload structures and experimental data
+- Report updated with `<HQI` and `<Qii` payload structures
+- `convert_eda()` docstring now notes it produces legacy-derived values when fed d306 `instant`
 
 ## 0.1.1 - 2026-04-13
 

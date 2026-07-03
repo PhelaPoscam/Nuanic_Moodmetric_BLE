@@ -222,15 +222,20 @@ class NuanicMonitor:
 
         return smoothed_ts, max(1, elapsed_session_ms)
 
-    def _parse_d306_packet(self, data: bytes) -> Optional[Dict[str, int]]:
+    def _parse_d306_packet(self, data: bytes) -> Optional[Dict[str, Any]]:
         if len(data) != 16:
             return None
 
+        timestamp_ms, instant, dne = struct.unpack("<Qii", data)
         return {
-            "clock": struct.unpack("<I", data[0:4])[0],
-            "context": struct.unpack("<I", data[4:8])[0],
-            "eda_value": struct.unpack("<I", data[8:12])[0],
-            "dne_stress_index": struct.unpack("<I", data[12:16])[0],
+            "timestamp_ms": timestamp_ms,
+            "instant": instant,
+            "dne": dne,
+            # backward compatibility keys for existing code:
+            "clock": timestamp_ms & 0xFFFFFFFF,
+            "context": instant,
+            "eda_value": instant,
+            "dne_stress_index": dne,
         }
 
     def _parse_468f_imu_batch(self, data: bytes) -> Optional[Dict[str, Any]]:
@@ -645,12 +650,13 @@ class NuanicMonitor:
 
         inserted = 0
         for state in self.device_states.values():
-            row = (
-                self._base_row(state, "MARKER")
-                + marker_fields
-                + self._row_rate_tail(state, would_drop=False)
-            )
-            self._enqueue_log(state, row)
+            if self.csv_layout != "nuanic":
+                row = (
+                    self._base_row(state, "MARKER")
+                    + marker_fields
+                    + self._row_rate_tail(state, would_drop=False)
+                )
+                self._enqueue_log(state, row)
 
             stream_row = self._base_row(state, "MARKER") + [
                 "",
@@ -704,6 +710,10 @@ class NuanicMonitor:
 
         return inserted
 
+    # ponytail: "stress" callback subscribes to LIVE_DNE_UUID (d306262b) —
+    # the preprocessed Instant Indicator + DNE stream.  The actual raw EDA
+    # stream (42dcb71b) arrives via _make_live_eda_callback, and the state
+    # indicator (3c180fcc) via the confusingly-named _make_raw_eda_callback.
     def _make_stress_callback(self, mac: str):
         def _cb(_sender: Any, data: bytes) -> None:
             try:
@@ -924,21 +934,24 @@ class NuanicMonitor:
                 state_code = data[0] if len(data) >= 1 else None
                 would_drop = False
 
-                row = (
-                    self._base_row(state, "STATE_3C18")
-                    + [
-                        "",  # 5: EDA_Raw_Value
-                        "",  # 6: Stress_Index
-                        "",  # 12: D306_Clock
-                        "",  # 13: D306_Context
-                        state_code if state_code is not None else "",  # 14: State_Code
-                        data.hex(),  # 15: payload_hex
-                        data.hex(),  # 22: full_packet_hex
-                        "",  # 23: decoded_fields
-                    ]
-                    + self._row_rate_tail(state, would_drop)
-                )
-                self._enqueue_log(state, row)
+                if self.csv_layout != "nuanic":
+                    row = (
+                        self._base_row(state, "STATE_3C18")
+                        + [
+                            "",  # 5: EDA_Raw_Value
+                            "",  # 6: Stress_Index
+                            "",  # 12: D306_Clock
+                            "",  # 13: D306_Context
+                            (
+                                state_code if state_code is not None else ""
+                            ),  # 14: State_Code
+                            data.hex(),  # 15: payload_hex
+                            data.hex(),  # 22: full_packet_hex
+                            "",  # 23: decoded_fields
+                        ]
+                        + self._row_rate_tail(state, would_drop)
+                    )
+                    self._enqueue_log(state, row)
 
                 stream_row = self._base_row(state, "STATE_3C18") + [
                     "",
@@ -969,35 +982,130 @@ class NuanicMonitor:
                 state.live_eda_count += 1
                 would_drop = False
 
-                row = (
-                    self._base_row(state, "LIVE_EDA_42DC")
-                    + [
-                        "",  # 5: EDA_Raw_Value
-                        "",  # 6: Stress_Index
-                        "",  # 12: D306_Clock
-                        "",  # 13: D306_Context
-                        "",  # 14: State_Code
-                        data.hex(),  # 15: payload_hex
-                        data.hex(),  # 22: full_packet_hex
-                        json.dumps({"len": len(data)}),  # 23: decoded_fields
-                    ]
-                    + self._row_rate_tail(state, would_drop)
-                )
-                self._enqueue_log(state, row)
+                decoded: Dict[str, Any] = {"len": len(data)}
+                eda_str = ""
+                freq, amp = 0.0, 0.0
+                res_kohm, cond_us, filtered_us = 0.0, 0.0, 0.0
+                timestamp_ms = ""
 
-                stream_row = self._base_row(state, "LIVE_EDA_42DC") + [
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    data.hex(),
-                    data.hex(),
-                    json.dumps({"len": len(data)}),
-                    "",
-                    "",
-                ]
-                self._enqueue_stream_log(state, stream_row)
+                if len(data) == 14:
+                    boot_count, timestamp_ms, eda_ohm = struct.unpack("<HQI", data)
+                    res_kohm = eda_ohm / 1000.0
+                    cond_us = (1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0
+                    decoded = {
+                        "boot_count": boot_count,
+                        "timestamp_ms": timestamp_ms,
+                        "eda_ohm": eda_ohm,
+                        "resistance_kohm": round(res_kohm, 3),
+                        "conductance_us": round(cond_us, 3),
+                    }
+                    eda_str = str(eda_ohm)
+
+                    # Update state telemetry for Mode 1 (MODE_RAW_EDA / 42dc)
+                    state.raw_eda = eda_ohm
+                    filtered_us = (
+                        cond_us
+                        if self.raw_signal
+                        else state.signal_conditioner.process(cond_us)
+                    )
+                    state.filtered_us = filtered_us
+                    state.mm_filtered_us_wave.append(filtered_us)
+                    state.live_dna_index.append(state.live_eda_count)
+                    state.live_dna_word2.append(eda_ohm)
+                    state.dne_stress_index = 0
+                    state.dne_stress_index_wave.append(0.0)
+
+                    freq, amp = state.scorer.update_scr_features(
+                        tonic_value=filtered_us
+                    )
+                    score_state = state.scorer.update(
+                        MMFeatures(
+                            scr_frequency_per_min=freq,
+                            scr_amplitude=amp,
+                            scl_microsiemens=filtered_us,
+                        )
+                    )
+                    state.arousal_score = score_state["mm_like_1_to_100"]
+                    state.mm_arousal_wave.append(state.arousal_score)
+                    state.mm_calibration_remaining = score_state[
+                        "calibration_seconds_remaining"
+                    ]
+                    state.mm_calibrated = bool(score_state["calibrated"])
+
+                if self.csv_layout == "nuanic":
+                    from datetime import timezone
+
+                    now_ts = datetime.now()
+                    ts_unix = f"{now_ts.timestamp():.6f}"
+                    ts_str = (
+                        now_ts.astimezone(timezone.utc).strftime(
+                            "%Y-%m-%d %H:%M:%S.%f"
+                        )[:-3]
+                        + "+00"
+                    )
+                    srl_ohms = int(eda_ohm) if len(data) == 14 else 0
+                    srrn = f"{freq:.1f}" if len(data) == 14 else "0.0"
+                    eda_val = int(eda_ohm) if len(data) == 14 else 0
+                    row = [
+                        state.mac,
+                        ts_unix,
+                        ts_str,
+                        0,  # dne is 0 in mode 1
+                        srl_ohms,
+                        srrn,
+                        eda_val,
+                    ]
+                    self._enqueue_log(state, row)
+                else:
+                    row = (
+                        self._base_row(state, "LIVE_EDA_42DC")
+                        + [
+                            eda_str,  # 5: EDA_Raw_Value (Ohms)
+                            "0",  # 6: Stress_Index
+                            str(timestamp_ms),  # 12: D306_Clock
+                            "",  # 13: D306_Context
+                            "",  # 14: State_Code
+                            data.hex(),  # 15: payload_hex
+                            data.hex(),  # 22: full_packet_hex
+                            json.dumps(decoded),  # 23: decoded_fields
+                        ]
+                        + self._row_rate_tail(state, would_drop)
+                    )
+                    self._enqueue_log(state, row)
+
+                    stream_row = self._base_row(state, "LIVE_EDA_42DC") + [
+                        str(timestamp_ms),
+                        "",
+                        eda_str,
+                        "0",
+                        "",
+                        data.hex(),
+                        data.hex(),
+                        json.dumps(decoded),
+                        "",
+                        "",
+                    ]
+                    computed_row = (
+                        self._base_row(state, "LIVE_EDA_COMPUTED")
+                        + [
+                            str(timestamp_ms),
+                            "",
+                            f"{res_kohm:.4f}" if len(data) == 14 else "",
+                            f"{cond_us:.4f}" if len(data) == 14 else "",
+                            f"{filtered_us:.4f}" if len(data) == 14 else "",
+                            f"{freq:.4f}" if len(data) == 14 else "",
+                            f"{amp:.4f}" if len(data) == 14 else "",
+                            f"{state.arousal_score:.2f}" if len(data) == 14 else "",
+                            "1" if getattr(state, "mm_calibrated", False) else "0",
+                        ]
+                        + self._row_rate_tail(state, would_drop)
+                        + [
+                            "",
+                            "",
+                        ]
+                    )
+                    self._enqueue_stream_log(state, stream_row)
+                    self._enqueue_computed_log(state, computed_row)
             except Exception:
                 _log.debug("Live EDA callback error for %s", mac, exc_info=True)
 
@@ -1037,7 +1145,6 @@ class NuanicMonitor:
         state.status = "connecting"
 
         # Optional Theory of Two: Firmware Warmup Sequence
-        had_warmup = False
         if self.target_hz and self.attempt_ring_rate_control and self.use_warmup:
             _log.info(
                 f"[WARMUP] Priming firmware for Rate Control ({self.target_hz}Hz) on {mac}..."
@@ -1082,6 +1189,16 @@ class NuanicMonitor:
         state.reconnect_attempt = 0
         state.battery = await self.connector.read_battery(address=mac)
 
+        await self._post_connect_setup(mac, state)
+
+        streams_ok = await self._subscribe_device_streams(mac)
+        if not streams_ok:
+            state.status = "degraded"
+            return False
+
+        return True
+
+    async def _post_connect_setup(self, mac: str, state: Any) -> None:
         if self.attempt_ring_rate_control and self.target_hz:
             result = await self.connector.attempt_set_sample_rate(
                 target_hz=int(self.target_hz),
@@ -1116,13 +1233,6 @@ class NuanicMonitor:
                 label,
             )
             await self.connector.set_mode(self.initial_mode, address=mac)
-
-        streams_ok = await self._subscribe_device_streams(mac)
-        if not streams_ok:
-            state.status = "degraded"
-            return False
-
-        return True
 
     async def start_multi(
         self,
@@ -1175,6 +1285,7 @@ class NuanicMonitor:
             state = self._ensure_device_state(mac)
             state.status = "connected"
             state.battery = await self.connector.read_battery()
+            await self._post_connect_setup(mac, state)
             ok = await self._subscribe_device_streams(mac)
             if not ok:
                 state.status = "degraded"
@@ -1326,7 +1437,6 @@ class NuanicMonitor:
             bat_str = f"{state.battery}%" if state.battery else "-"
             eda_str = str(state.raw_eda) if state.raw_eda else "N/A"
             filt_str = f"{state.filtered_us:.3f}" if state.filtered_us else "N/A"
-            ar_str = f"{state.arousal_score:.1f}"
             dne_str = (
                 str(state.dne_stress_index)
                 if state.dne_stress_index is not None
@@ -1345,7 +1455,6 @@ class NuanicMonitor:
                     "battery": bat_str,
                     "raw_eda": eda_str,
                     "filtered_us": filt_str,
-                    "arousal_score": ar_str,
                     "dne_score": dne_str,
                     "observed_hz": rate_hz,
                     "rate_control": state.rate_control_status,

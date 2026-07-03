@@ -392,29 +392,46 @@ def _format_hex_spaced(data: bytes) -> str:
 
 
 def parse_eda_data(sender, data: bytearray):
-    """Parse 16-byte d306 EDA frame and print key fields.
+    """Parse 16-byte Live DNE frame and print key fields.
 
     Layout (little-endian):
-    - bytes 0-3: hardware timestamp (uint32)
-    - bytes 4-7: static context/session (ignored)
-    - bytes 8-11: raw EDA value (uint32)
-    - bytes 12-15: signal quality/contact score (uint32, expected 0-100)
+    - bytes 0-7: Unix timestamp in ms (uint64)
+    - bytes 8-11: instant indicator normalized around 1e6 (int32)
+    - bytes 12-15: DNE score (int32)
     """
     payload = bytes(data)
     ts = datetime.now().isoformat(timespec="milliseconds")
     if len(payload) != 16:
         print(
-            f"[{ts}] [EDA STREAM] Invalid payload length: {len(payload)} "
+            f"[{ts}] [LIVE DNE STREAM] Invalid payload length: {len(payload)} "
             f"(expected 16)"
         )
         return
 
-    clock = struct.unpack("<I", payload[0:4])[0]
-    eda_value = struct.unpack("<I", payload[8:12])[0]
-    signal_quality = struct.unpack("<I", payload[12:16])[0]
+    timestamp_ms, instant, dne = struct.unpack("<Qii", payload)
     print(
-        f"[{ts}] [EDA STREAM] Clock: {clock} | EDA Value: {eda_value} | "
-        f"Signal Quality: {signal_quality}%"
+        f"[{ts}] [LIVE DNE] Timestamp: {timestamp_ms} ms | Instant Indicator: {instant} | "
+        f"DNE: {dne}"
+    )
+
+
+def parse_live_eda(sender, data: bytearray):
+    """Parse 14-byte Live EDA frame."""
+    payload = bytes(data)
+    ts = datetime.now().isoformat(timespec="milliseconds")
+    if len(payload) != 14:
+        print(
+            f"[{ts}] [LIVE EDA STREAM] Invalid payload length: {len(payload)} "
+            f"(expected 14)"
+        )
+        return
+
+    boot_count, timestamp_ms, eda_ohm = struct.unpack("<HQI", payload)
+    res_kohm = eda_ohm / 1000.0
+    cond_us = (1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0
+    print(
+        f"[{ts}] [LIVE EDA] Boot: {boot_count} | Timestamp: {timestamp_ms} ms | "
+        f"Resistance: {res_kohm:.3f} kOhm | Conductance: {cond_us:.3f} uS"
     )
 
 
@@ -472,12 +489,15 @@ async def subscribe_core_streams(
                     stats_key = char_uuid.lower()
                     stream_stats[stats_key].add(payload)
 
-                    if (
-                        resolved_profile == NUANIC_PROFILE
-                        and char_uuid.lower() == "d306262b-c8c9-4c4b-9050-3a41dea706e5"
-                    ):
-                        parse_eda_data(_sender, bytearray(payload))
-                        return
+                    if resolved_profile == NUANIC_PROFILE:
+                        if char_uuid.lower() == "d306262b-c8c9-4c4b-9050-3a41dea706e5":
+                            parse_eda_data(_sender, bytearray(payload))
+                            return
+                        elif (
+                            char_uuid.lower() == "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
+                        ):
+                            parse_live_eda(_sender, bytearray(payload))
+                            return
 
                     ts = datetime.now().isoformat(timespec="milliseconds")
                     print(

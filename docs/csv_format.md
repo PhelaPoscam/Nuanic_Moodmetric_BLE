@@ -163,12 +163,13 @@ This stream indicates whether the ring is worn on the finger. It is sent wheneve
   * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop` (with `Equalize_WouldDrop` = `0`)
 
 ### 5. `LIVE_EDA_42DC`
-A notification channel that fires occasionally but carries no structured physiological payload.
+Live Raw EDA stream from `42dcb71b` (active only in `MODE_RAW_EDA`). 14-byte `<HQI` packets decoded to `boot_count`, `timestamp_ms`, and `eda_ohm` (skin resistance in Ohms).
 
-* **Populated columns:**
+* **Populated columns (all layouts):**
   * Base columns: `timestamp`, `elapsed_ms`, `device_mac`, `connection_state`, `data_type`
+  * `EDA_Raw_Value`: the `eda_ohm` integer (resistance in Ohms)
+  * `decoded_fields`: JSON string with `boot_count`, `timestamp_ms`, `eda_ohm`, `resistance_kohm`, `conductance_us`
   * Raw packet: `payload_hex`, `full_packet_hex`
-  * Metadata: `decoded_fields` (contains JSON string representing the length of the packet, e.g. `{"len": 2}`)
   * Diagnostics: standard rate tail.
 
 ### 6. `MARKER`
