@@ -37,11 +37,6 @@ class NuanicConnector:
     )
     MODE_RESEARCH = 0x03  # Undocumented/legacy variant of Format 2 (Preprocessed + DNE)
 
-    # Backward-compat aliases
-    MODE_ALGO = MODE_RAW_EDA
-    MODE_EDA = MODE_LIVE
-    MODE_EDA_VARIANT = MODE_RESEARCH
-
     MODE_LABELS = {
         0x00: "standby",
         0x01: "raw_eda",
@@ -73,26 +68,6 @@ class NuanicConnector:
     BATTERY_UUID = (
         "00002a19-0000-1000-8000-00805f9b34fb"  # Standard BLE Battery Service
     )
-
-    # Backward compatibility aliases
-    ALGO_1MIN_UUID = LIVE_EDA_UUID
-    LIVE_DNA_UUID = LIVE_DNE_UUID
-    PHYSIOLOGY_UUID = LIVE_DNE_UUID
-    BUFFER_UUID = STORAGE_UUID
-    STRESS_STREAM_UUID = LIVE_DNE_UUID
-    RAW_EDA_STREAM = LIVE_EDA_UUID
-    RATE_CONTROL_UUID = SAMPLE_RATE_UUID
-    STREAM_SELECT_UUID = STORAGE_FORMAT_UUID
-
-    # Core aliases used across the existing telemetry code.
-    BATTERY_CHARACTERISTIC = BATTERY_UUID
-    IMU_CHARACTERISTIC = IMU_BATCH_UUID
-    # ponytail: legacy alias — points to STATE_UUID (on/off-finger), NOT the
-    # raw EDA stream.  The actual raw EDA stream is LIVE_EDA_UUID (42dcb71b).
-    # Code that wants real raw EDA should use subscribe_to_live_eda() instead.
-    RAW_EDA_CHARACTERISTIC = STATE_UUID
-    ALGO_1MIN_CHARACTERISTIC = ALGO_1MIN_UUID
-    STRESS_CHARACTERISTIC = PHYSIOLOGY_UUID
 
     def __init__(
         self,
@@ -331,10 +306,10 @@ class NuanicConnector:
                         event.clear()
 
                 for char_uuid in [
-                    self.STRESS_CHARACTERISTIC,
-                    self.IMU_CHARACTERISTIC,
-                    self.RAW_EDA_CHARACTERISTIC,
-                    self.ALGO_1MIN_CHARACTERISTIC,
+                    self.LIVE_DNE_UUID,
+                    self.IMU_BATCH_UUID,
+                    self.STATE_UUID,
+                    self.LIVE_EDA_UUID,
                 ]:
                     try:
                         await target_client.stop_notify(char_uuid)
@@ -594,7 +569,7 @@ class NuanicConnector:
             return None
 
         try:
-            value = await client.read_gatt_char(self.BATTERY_CHARACTERISTIC)
+            value = await client.read_gatt_char(self.BATTERY_UUID)
             return value[0]
         except Exception as e:
             print(f"[FAIL] Battery read error: {e}")
@@ -675,7 +650,7 @@ class NuanicConnector:
     ) -> bool:
         """Subscribe to stress data notifications"""
         return await self._subscribe(
-            self.STRESS_CHARACTERISTIC, callback, address, "stress data"
+            self.LIVE_DNE_UUID, callback, address, "stress data"
         )
 
     async def subscribe_to_imu(
@@ -686,17 +661,15 @@ class NuanicConnector:
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to IMU (accelerometer) notifications"""
-        return await self._subscribe(
-            self.IMU_CHARACTERISTIC, callback, address, "IMU data"
-        )
+        return await self._subscribe(self.IMU_BATCH_UUID, callback, address, "IMU data")
 
     async def unsubscribe_from_stress(self, address: Optional[str] = None) -> None:
         """Unsubscribe from stress notifications"""
-        await self._unsubscribe(self.STRESS_CHARACTERISTIC, address)
+        await self._unsubscribe(self.LIVE_DNE_UUID, address)
 
     async def unsubscribe_from_imu(self, address: Optional[str] = None) -> None:
         """Unsubscribe from IMU notifications"""
-        await self._unsubscribe(self.IMU_CHARACTERISTIC, address)
+        await self._unsubscribe(self.IMU_BATCH_UUID, address)
 
     async def subscribe_to_raw_eda(
         self,
@@ -706,13 +679,11 @@ class NuanicConnector:
         address: Optional[str] = None,
     ) -> bool:
         """Subscribe to raw EDA data notifications"""
-        return await self._subscribe(
-            self.RAW_EDA_CHARACTERISTIC, callback, address, "raw EDA data"
-        )
+        return await self._subscribe(self.STATE_UUID, callback, address, "raw EDA data")
 
     async def unsubscribe_from_raw_eda(self, address: Optional[str] = None) -> None:
         """Unsubscribe from raw EDA notifications"""
-        await self._unsubscribe(self.RAW_EDA_CHARACTERISTIC, address)
+        await self._unsubscribe(self.STATE_UUID, address)
 
     async def subscribe_to_live_eda(
         self,
@@ -723,7 +694,7 @@ class NuanicConnector:
     ) -> bool:
         """Subscribe to LIVE_EDA UUID notifications (42dcb71b...)."""
         return await self._subscribe(
-            self.ALGO_1MIN_CHARACTERISTIC,
+            self.LIVE_EDA_UUID,
             callback,
             address,
             "LIVE_EDA notifications",
@@ -731,7 +702,7 @@ class NuanicConnector:
 
     async def unsubscribe_from_live_eda(self, address: Optional[str] = None) -> None:
         """Unsubscribe from LIVE_EDA UUID notifications."""
-        await self._unsubscribe(self.ALGO_1MIN_CHARACTERISTIC, address)
+        await self._unsubscribe(self.LIVE_EDA_UUID, address)
 
     async def attempt_set_sample_rate(
         self,
@@ -865,7 +836,7 @@ class NuanicConnector:
         if not client or not getattr(client, "is_connected", False):
             return None
         try:
-            data = await client.read_gatt_char(self.BUFFER_UUID)
+            data = await client.read_gatt_char(self.STORAGE_UUID)
             return bytes(data)
         except Exception as exc:
             _log.debug("read_buffer: %s", exc)

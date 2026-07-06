@@ -176,7 +176,7 @@ Experimentally tested with `scripts/probe_flash_storage.py` (3-minute dual-mode 
   await connector.connect()
   await connector.set_mode(MODE_LIVE)        # Responsive DNE — short filter window
   await connector.set_sample_rate(16)        # 3–16 Hz
-  # ... or use NuanicMonitor(initial_mode=MODE_EDA, target_hz=16)
+  # ... or use NuanicMonitor(initial_mode=MODE_LIVE, target_hz=16)
   ```
 
 ---
