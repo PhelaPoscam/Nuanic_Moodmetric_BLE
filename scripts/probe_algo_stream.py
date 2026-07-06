@@ -199,7 +199,9 @@ async def main() -> int:
 
         # Timestamp / rate diagnostics
         if len(timestamps) > 1:
-            ts_deltas = [timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))]
+            ts_deltas = [
+                timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))
+            ]
             avg_delta_ms = sum(ts_deltas) / len(ts_deltas)
             print(
                 f"\n  Timestamp deltas: min={min(ts_deltas)} max={max(ts_deltas)} "
