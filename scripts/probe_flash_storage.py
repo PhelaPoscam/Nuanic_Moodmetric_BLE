@@ -102,10 +102,10 @@ async def main() -> int:
             }
             # Decode known formats
             if stream_tag == "d306" and len(payload) == 16:
-                entry["clock"] = struct.unpack("<I", payload[0:4])[0]
-                entry["ctx"] = struct.unpack("<I", payload[4:8])[0]
-                entry["raw_eda"] = struct.unpack("<I", payload[8:12])[0]
-                entry["dne"] = struct.unpack("<I", payload[12:16])[0]
+                ts_ms, instant, dne = struct.unpack("<Qii", payload)
+                entry["timestamp_ms"] = ts_ms
+                entry["instant"] = instant
+                entry["dne"] = dne
             elif stream_tag == "42dc" and len(payload) == 14:
                 entry["header"] = struct.unpack("<H", payload[0:2])[0]
                 entry["clock"] = struct.unpack("<I", payload[2:6])[0]
@@ -204,10 +204,10 @@ async def main() -> int:
             ]
             if d306_pkts:
                 last = d306_pkts[-1]
-                extra = f"| last_d306: rawEDA={last.get('raw_eda','?')} DNE={last.get('dne','?')} Ctx={last.get('ctx','?')}"
+                extra = f"| last_d306: instant={last.get('instant','?')} DNE={last.get('dne','?')} ts={last.get('timestamp_ms','?')}"
             print(
                 f"  stream t={elapsed:5.1f}s | "
-                f"d306={recent['d306']:4d}(+{recent['d306']}) "
+                f"d306={recent['d306']:4d}(+{stream_pkt_counts['d306']}) "
                 f"42dc={recent['42dc']:4d} "
                 f"state={recent['3c18']:4d} "
                 f"imu={recent['468f']:4d} {extra}"
@@ -269,10 +269,10 @@ async def main() -> int:
             ]
             if d306_pkts:
                 last = d306_pkts[-1]
-                extra = f"| last_d306: rawEDA={last.get('raw_eda','?')} DNE={last.get('dne','?')} Ctx={last.get('ctx','?')}"
+                extra = f"| last_d306: instant={last.get('instant','?')} DNE={last.get('dne','?')} ts={last.get('timestamp_ms','?')}"
             print(
                 f"  stream t={elapsed:5.1f}s | "
-                f"d306={recent['d306']:4d}(+{recent['d306']}) "
+                f"d306={recent['d306']:4d}(+{stream_pkt_counts['d306']}) "
                 f"42dc={recent['42dc']:4d} "
                 f"state={recent['3c18']:4d} "
                 f"imu={recent['468f']:4d} {extra}"
@@ -383,9 +383,8 @@ async def main() -> int:
                 "stream",
                 "hex",
                 "len",
-                "clock",
-                "ctx",
-                "raw_eda",
+                "timestamp_ms",
+                "instant",
                 "dne",
                 "header",
                 "mystery_u16_0",

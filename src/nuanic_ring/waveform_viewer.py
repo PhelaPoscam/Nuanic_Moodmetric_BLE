@@ -419,68 +419,6 @@ def _run_plot_blocking(
             pass
 
 
-async def run_waveform_viewer(
-    ring_addr: str | None = None,
-    window_seconds: int = 10,
-    refresh_ms: int = 120,
-    smooth_window: int = 1,
-    calibration_seconds: int = 60,
-    target_hz: float | None = None,
-    attempt_rate_control: bool = False,
-    raw_signal: bool = False,
-    initial_mode: int | None = None,
-) -> int:
-    """Run standalone live telemetry plotter.
-
-    matplotlib runs in a thread pool (``run_in_executor``) so its GUI event
-    loop never conflicts with the asyncio event loop handling BLE callbacks.
-    Shared state is protected by ``threading.Lock``.
-    """
-    viewer = NuanicWaveformViewer(
-        ring_addr=ring_addr,
-        calibration_seconds=calibration_seconds,
-        target_hz=target_hz,
-        attempt_rate_control=attempt_rate_control,
-        raw_signal=raw_signal,
-        initial_mode=initial_mode,
-    )
-
-    if not await viewer.connect_and_subscribe():
-        print(
-            "[FAIL] Could not connect and subscribe to high-frequency telemetry streams"
-        )
-        return 1
-
-    print("[OK] Connected. Opening live telemetry window...")
-    if smooth_window > 1:
-        print(f"[SMOOTH] Applying {smooth_window}-point moving average filter")
-
-    worker = asyncio.create_task(viewer.run_until_stopped())
-
-    loop = asyncio.get_running_loop()
-    try:
-        await loop.run_in_executor(
-            None,
-            _run_plot_blocking,
-            viewer,
-            window_seconds,
-            refresh_ms,
-            smooth_window,
-        )
-    except KeyboardInterrupt:
-        print("\n[STOP] Interrupted by user")
-    finally:
-        viewer._running = False
-        await viewer.stop()
-        try:
-            await asyncio.wait_for(worker, timeout=2.0)
-        except asyncio.TimeoutError:
-            worker.cancel()
-
-    print("[STOP] Waveform viewer stopped")
-    return 0
-
-
 def run_waveform_viewer_sync(
     ring_addr: str | None = None,
     window_seconds: int = 10,

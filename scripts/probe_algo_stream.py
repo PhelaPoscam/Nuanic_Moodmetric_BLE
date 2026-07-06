@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
-"""Capture and brute-force decode the 42dcb71b ALGO stream (Mode 0x01).
+"""Capture and decode the 42dcb71b ALGO stream (Mode 0x01).
 
-The 14-byte packet structure is NOT verified.  Known layout:
+The 14-byte packet structure is verified:
 
-    [0-1]  0600         — header (constant)
-    [2-5]  XXXXXXXX     — clock / timestamp (uint32 LE, monotonic)
-    [6-9]  00000000     — context? (always zero in captures)
-    [10-13] YYYYYYYY    — MYSTERY PAYLOAD
+    [0-1]   boot_count    — uint16 LE
+    [2-9]   timestamp_ms  — uint64 LE (Unix epoch milliseconds)
+    [10-13] eda_ohm       — uint32 LE (skin resistance in Ohms)
 
-The Nuanic manual claims bytes 10-13 encode Average DNE + SRL + SRRN,
-which is implausible in 4 bytes without packed encoding.  This script
-captures every packet and decodes the mystery field as:
-
-    • uint32 LE    • int32 LE     • float32 LE
-    • 2 × int16 LE  • 2 × uint16 LE
-
-All output goes to a timestamped CSV for offline analysis.
+This script captures every packet and logs the known fields plus
+derived conductance for offline analysis.
 """
 
 import argparse
@@ -54,28 +47,13 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def decode_mystery(val_bytes: bytes) -> dict:
-    """Try every plausible decoding of the 4-byte mystery field."""
-    u32 = struct.unpack("<I", val_bytes)[0]
-    i32 = struct.unpack("<i", val_bytes)[0]
-    try:
-        f32 = struct.unpack("<f", val_bytes)[0]
-    except Exception:
-        f32 = float("nan")
-
-    i16_0 = struct.unpack("<h", val_bytes[0:2])[0]
-    i16_1 = struct.unpack("<h", val_bytes[2:4])[0]
-    u16_0 = struct.unpack("<H", val_bytes[0:2])[0]
-    u16_1 = struct.unpack("<H", val_bytes[2:4])[0]
-
+def decode_eda(eda_ohm: int) -> dict:
+    """Derive resistance and conductance from raw EDA in Ohms."""
+    resistance_kohm = eda_ohm / 1000.0
+    conductance_us = (1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0
     return {
-        "u32": u32,
-        "i32": i32,
-        "f32": f32,
-        "i16_0": i16_0,
-        "i16_1": i16_1,
-        "u16_0": u16_0,
-        "u16_1": u16_1,
+        "resistance_kohm": resistance_kohm,
+        "conductance_us": conductance_us,
     }
 
 
@@ -170,105 +148,65 @@ async def main() -> int:
                     "elapsed_s",
                     "unix_time",
                     "raw_hex",
-                    "header_u16",
-                    "clock_u32",
-                    "ctx_u32",
-                    "mystery_u32",
-                    "mystery_i32",
-                    "mystery_f32",
-                    "mystery_i16_0",
-                    "mystery_i16_1",
-                    "mystery_u16_0",
-                    "mystery_u16_1",
+                    "boot_count",
+                    "timestamp_ms",
+                    "eda_ohm",
+                    "resistance_kohm",
+                    "conductance_us",
                 ]
             )
 
             for t, data in packets:
                 elapsed = t - t0
-                header = struct.unpack("<H", data[0:2])[0]
-                clock = struct.unpack("<I", data[2:6])[0]
-                ctx = struct.unpack("<I", data[6:10])[0]
-                mystery = data[10:14]
-                d = decode_mystery(mystery)
+                boot_count, timestamp_ms, eda_ohm = struct.unpack("<HQI", data)
+                d = decode_eda(eda_ohm)
 
                 writer.writerow(
                     [
                         f"{elapsed:.3f}",
                         f"{t:.6f}",
                         data.hex(),
-                        header,
-                        clock,
-                        ctx,
-                        d["u32"],
-                        d["i32"],
-                        d["f32"],
-                        d["i16_0"],
-                        d["i16_1"],
-                        d["u16_0"],
-                        d["u16_1"],
+                        boot_count,
+                        timestamp_ms,
+                        eda_ohm,
+                        f"{d['resistance_kohm']:.4f}",
+                        f"{d['conductance_us']:.4f}",
                     ]
                 )
 
         # ── Summary statistics ─────────────────────────────────────
         print_header("SUMMARY STATISTICS")
 
-        u32_vals = []
-        i16_0_vals = []
-        i16_1_vals = []
-        u16_0_vals = []
-        u16_1_vals = []
-        clocks = []
+        eda_vals = []
+        timestamps = []
 
         for _, data in packets:
-            clocks.append(struct.unpack("<I", data[2:6])[0])
-            d = decode_mystery(data[10:14])
-            u32_vals.append(d["u32"])
-            i16_0_vals.append(d["i16_0"])
-            i16_1_vals.append(d["i16_1"])
-            u16_0_vals.append(d["u16_0"])
-            u16_1_vals.append(d["u16_1"])
+            _boot, ts, eda = struct.unpack("<HQI", data)
+            timestamps.append(ts)
+            eda_vals.append(eda)
 
-        def stats(name, vals):
-            if not vals:
-                return
-            unique = len(set(vals))
+        if eda_vals:
+            unique_eda = len(set(eda_vals))
+            cond_vals = [decode_eda(e)["conductance_us"] for e in eda_vals]
             print(
-                f"  {name:12s} | min={min(vals):12d} | max={max(vals):12d} | "
-                f"unique={unique:5d} | first={vals[0]} | last={vals[-1]}"
+                f"  EDA (Ohm)    | min={min(eda_vals):12d} | max={max(eda_vals):12d} | "
+                f"unique={unique_eda:5d} | first={eda_vals[0]} | last={eda_vals[-1]}"
+            )
+            print(
+                f"  Conduct. (uS)| min={min(cond_vals):12.4f} | max={max(cond_vals):12.4f} | "
+                f"first={cond_vals[0]:.4f} | last={cond_vals[-1]:.4f}"
             )
 
-        stats("uint32", u32_vals)
-        stats("i16_0", i16_0_vals)
-        stats("i16_1", i16_1_vals)
-        stats("u16_0", u16_0_vals)
-        stats("u16_1", u16_1_vals)
-
-        # Clock diagnostics
-        if len(clocks) > 1:
-            clock_deltas = [clocks[i] - clocks[i - 1] for i in range(1, len(clocks))]
-            avg_delta = sum(clock_deltas) / len(clock_deltas)
+        # Timestamp / rate diagnostics
+        if len(timestamps) > 1:
+            ts_deltas = [timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))]
+            avg_delta_ms = sum(ts_deltas) / len(ts_deltas)
             print(
-                f"\n  Clock deltas: min={min(clock_deltas)} max={max(clock_deltas)} "
-                f"avg={avg_delta:.1f}"
+                f"\n  Timestamp deltas: min={min(ts_deltas)} max={max(ts_deltas)} "
+                f"avg={avg_delta_ms:.1f} ms"
             )
-            if avg_delta > 0:
-                print(
-                    f"  Effective rate: {1.0 / (avg_delta / 1000):.1f} Hz "
-                    f"(assuming clock is ms)"
-                )
-
-        # Heuristic: which decoding looks like DNE (0–100 range)?
-        print_header("DNE RANGE HEURISTIC (looking for 0–100 values)")
-        for label, vals in [
-            ("uint32", u32_vals),
-            ("i16_0", i16_0_vals),
-            ("i16_1", i16_1_vals),
-            ("u16_0", u16_0_vals),
-            ("u16_1", u16_1_vals),
-        ]:
-            in_range = sum(1 for v in vals if 0 <= v <= 100)
-            pct = 100 * in_range / len(vals) if vals else 0
-            print(f"  {label:12s}: {in_range}/{len(vals)} values in 0–100 ({pct:.0f}%)")
+            if avg_delta_ms > 0:
+                print(f"  Effective rate: {1000.0 / avg_delta_ms:.1f} Hz")
 
         print(f"\n[DONE] Full decode written to: {csv_path}")
         return 0
