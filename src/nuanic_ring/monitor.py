@@ -825,7 +825,7 @@ class NuanicMonitor:
                         ]
                         + self._row_rate_tail(state, would_drop)
                     )
-                self._enqueue_log(state, row)
+                    self._enqueue_log(state, row)
 
                 stream_row = self._base_row(state, "D306_EDA", **_row_kw) + [
                     clock,
@@ -978,9 +978,17 @@ class NuanicMonitor:
                     return
 
                 state = self._ensure_device_state(mac)
-                state.last_seen = datetime.now()
+                now = datetime.now()
+                state.last_seen = now
+                self._update_observed_hz(state, "d306", now)
+                would_drop = self._equalize_decision(state, "d306")
+
+                if would_drop and self.equalize_mode == "enforce":
+                    return
+
+                state.last_accepted_d306_ts = now
                 state.live_eda_count += 1
-                would_drop = False
+                state.heartbeat_tick = not state.heartbeat_tick
 
                 decoded: Dict[str, Any] = {"len": len(data)}
                 eda_str = ""

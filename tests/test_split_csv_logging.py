@@ -82,12 +82,25 @@ def test_live_eda_raw_csv_layouts():
     mac = "AA:BB:CC:DD:EE:FF"
     monitor._ensure_device_state(mac)
 
+    import time
+
     # 14-byte packet: boot_count=10, timestamp_ms=123456, eda_ohm=50000 (50 kOhm -> 20 uS)
     raw_packet = struct.pack("<HQI", 10, 123456, 50000)
     monitor._make_live_eda_callback(mac)(None, raw_packet)
 
-    assert len(stream_rows) == 1
-    assert len(computed_rows) == 1
+    state = monitor.device_states[mac]
+    assert state.heartbeat_tick is True
+    assert state.d306_observed_hz == 0.0
+
+    # Second callback invocation after a small sleep to verify observed HZ calculation
+    time.sleep(0.05)
+    monitor._make_live_eda_callback(mac)(None, raw_packet)
+
+    assert state.heartbeat_tick is False  # Toggled twice
+    assert state.d306_observed_hz > 0.0
+
+    assert len(stream_rows) == 2
+    assert len(computed_rows) == 2
     assert stream_rows[0][4] == "LIVE_EDA_42DC"
     assert stream_rows[0][7] == "50000"  # EDA_Raw_Value
     assert computed_rows[0][4] == "LIVE_EDA_COMPUTED"
