@@ -4,8 +4,7 @@ import argparse
 import asyncio
 import sys
 import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 from nuanic_ring import (
     MODE_LIVE,
@@ -38,18 +37,6 @@ def _check_dependency(module_name: str, extra: str = "cli") -> bool:
         return False
 
 
-def _stdout_encoding_is_utf8() -> bool:
-    return (sys.stdout.encoding or "").lower() == "utf-8"
-
-
-if sys.platform == "win32":
-    try:
-        if not _stdout_encoding_is_utf8():
-            sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    except Exception:
-        pass
-
-
 def _parse_ring_addresses(ring_addr: str, ring_addrs: str) -> List[str]:
     addresses = []
     if ring_addr:
@@ -67,31 +54,22 @@ def _parse_ring_addresses(ring_addr: str, ring_addrs: str) -> List[str]:
     return dedup
 
 
-def _parse_marker_hotkey_spec(spec: str) -> Optional[Tuple[str, str]]:
-    text = spec.strip()
-    if not text or "=" not in text:
-        return None
-    key_text, label_text = text.split("=", 1)
-    key = key_text.strip().upper()
-    label = label_text.strip()
-    return (key, label) if key and label else None
-
-
-def _default_marker_hotkeys() -> Dict[str, str]:
-    return {
+def _build_marker_hotkeys(specs: List[str]) -> Dict[str, str]:
+    hotkeys = {
         "SPACE": "marker",
         "S": "stimulus_on",
         "B": "baseline_start",
         "R": "rest_start",
     }
-
-
-def _build_marker_hotkeys(specs: List[str]) -> Dict[str, str]:
-    hotkeys = _default_marker_hotkeys()
     for spec in specs:
-        parsed = _parse_marker_hotkey_spec(spec)
-        if parsed:
-            hotkeys[parsed[0]] = parsed[1]
+        text = spec.strip()
+        if not text or "=" not in text:
+            continue
+        key_text, label_text = text.split("=", 1)
+        key = key_text.strip().upper()
+        label = label_text.strip()
+        if key and label:
+            hotkeys[key] = label
     return hotkeys
 
 
@@ -174,8 +152,6 @@ def _parse_marker_label(raw_line: str) -> str | None:
     if lower.startswith("marker "):
         label = line[7:].strip()
         return label or None
-    if lower.startswith("/m ") or lower.startswith("marker "):
-        return None
     return line
 
 
@@ -397,7 +373,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
 
     console = Console(force_terminal=True, emoji=False)
     box_style = None
-    if sys.platform == "win32" and not _stdout_encoding_is_utf8():
+    if sys.platform == "win32" and (sys.stdout.encoding or "").lower() != "utf-8":
         from rich import box
 
         box_style = box.ASCII

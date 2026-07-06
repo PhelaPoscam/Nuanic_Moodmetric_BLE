@@ -20,7 +20,7 @@ pip install nuanic-ring
 ```
 
 #### Option B: Library with CLI & Tooling Install (Recommended for CLI Use)
-To install the package along with the interactive terminal dashboard, waveform viewer, and offline logs analysis tools (which pull in `rich`, `matplotlib`, `pandas`, and `numpy`):
+To install the package along with the interactive terminal dashboard and waveform viewer (which pull in `rich`, `matplotlib`, and `numpy`):
 ```bash
 pip install "nuanic-ring[cli]"
 ```
@@ -48,9 +48,6 @@ nuanic-ring-monitor --mode raw_eda --target-hz 16
 
 # Launch live dashboard visualization
 nuanic-ring-monitor --waveform
-
-# Run post-session analysis on a log
-nuanic-ring-analyzer data/ring_logs/SessionDate_YYYY-MM-DD_HH-MM-SS/csvs/ring--MAC.csv
 
 # Output exact Nuanic sample format CSV with SRL and SRRN
 nuanic-ring-monitor --nuanic-export --log

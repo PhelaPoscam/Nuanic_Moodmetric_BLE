@@ -1,124 +1,15 @@
 """Moodmetric-compatible helpers for Nuanic ring packets and scoring.
 
-This module provides:
-- Decoding helpers for 7-byte streaming packets and 2-byte raw-resistance packets.
-- A calibration-based 1-100 score inspired by Moodmetric-style aggregation.
-
-The exact proprietary Moodmetric formula is not public. The score here is an
-interpretable approximation that combines SCR-like frequency, SCR amplitude,
-and SCL (skin conductance) and scales the weighted result to a personal
-1-100 range using per-user min/max calibration.
+This module provides a calibration-based 1-100 scorer inspired by
+Moodmetric-style aggregation. The exact proprietary Moodmetric formula is
+not public — the score here is an interpretable approximation.
 """
 
 from __future__ import annotations
 
 import math
 from collections import deque
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-
-# Empirical linear conversion from a field example:
-# raw=3464 -> 845716.029603 ohms.
-DEFAULT_OHMS_PER_RAW_UNIT = 244.14435034728638
-
-
-def clamp(value: float, low: float, high: float) -> float:
-    """Clamp value between low and high."""
-    return max(low, min(high, value))
-
-
-def convert_eda(raw_value: int):
-    """Convert raw EDA integer into resistance (kOhm) and conductance (uS).
-
-    .. note::
-       When called with the d306 DNE stream's ``instant`` indicator this
-       produces legacy derived values — the ``instant`` is a preprocessed
-       indicator (normalised around 1e6), **not** a resistance in Ohms.
-       For physically correct resistance/conductance use the raw EDA stream
-       from ``LIVE_EDA_UUID`` (42dcb71b) whose ``eda_ohm`` field *is* Ohms.
-    """
-    resistance_kohm = raw_value / 1000.0
-    conductance_us = (1000.0 / resistance_kohm) if resistance_kohm > 0 else 0.0
-    return resistance_kohm, conductance_us
-
-
-def decode_streaming_packet(packet: bytes) -> dict | None:
-    """Decode 7-byte streaming packet.
-
-    Layout (byte offsets):
-    - 0: status bits
-    - 1: MM-like number (0-255)
-    - 2-3: instant EDA (uint16, big-endian)
-    - 4-6: acceleration x/y/z (uint8)
-    """
-    if len(packet) < 7:
-        return None
-
-    status = packet[0]
-    mm_number = packet[1]
-    instant_eda = (packet[2] << 8) | packet[3]
-    ax_raw, ay_raw, az_raw = packet[4], packet[5], packet[6]
-
-    # Map 0..255 to 0..1 g (legacy-compatible interpretation).
-    ax_g = ax_raw / 255.0
-    ay_g = ay_raw / 255.0
-    az_g = az_raw / 255.0
-    accel_magnitude_g = math.sqrt(ax_g * ax_g + ay_g * ay_g + az_g * az_g)
-
-    return {
-        "status_bits_byte": status,
-        "status_bits": {
-            "MM_not_ready": (status >> 0) & 1,
-            "ring_in_finger": (status >> 1) & 1,
-            "battery_is_out": (status >> 2) & 1,
-            "any_reaction": (status >> 3) & 1,
-            "strong_reaction": (status >> 4) & 1,
-            "MM_notification": (status >> 5) & 1,
-            "relax_notification": (status >> 6) & 1,
-            "reserved": (status >> 7) & 1,
-        },
-        "mm_number": mm_number,
-        "instant_eda": instant_eda,
-        "ax_raw": ax_raw,
-        "ay_raw": ay_raw,
-        "az_raw": az_raw,
-        "ax_g": ax_g,
-        "ay_g": ay_g,
-        "az_g": az_g,
-        "accel_magnitude_g": accel_magnitude_g,
-    }
-
-
-def decode_raw_resistance_packet(
-    packet: bytes,
-    ohms_per_raw_unit: float = DEFAULT_OHMS_PER_RAW_UNIT,
-) -> dict | None:
-    """Decode 2-byte raw-resistance packet and derive Ohms/Siemens values."""
-    if len(packet) < 2:
-        return None
-
-    raw_value = (packet[0] << 8) | packet[1]
-    skin_resistance_ohms = raw_value * ohms_per_raw_unit
-    skin_conductance_siemens = (
-        1.0 / skin_resistance_ohms if skin_resistance_ohms > 0 else 0.0
-    )
-    skin_conductance_microsiemens = skin_conductance_siemens * 1_000_000.0
-
-    return {
-        "raw_skin_resistance_value": raw_value,
-        "skin_resistance_ohms": skin_resistance_ohms,
-        "skin_conductance_siemens": skin_conductance_siemens,
-        "skin_conductance_microsiemens": skin_conductance_microsiemens,
-    }
-
-
-@dataclass
-class MMFeatures:
-    """Features used for mm-like scoring."""
-
-    scr_frequency_per_min: float
-    scr_amplitude: float
-    scl_microsiemens: float
 
 
 class MMLikeScorer:
@@ -148,16 +39,16 @@ class MMLikeScorer:
         self._last_event_time: datetime | None = None
         self._baseline_ema: float | None = None
 
-    def _normalize_log(self, value: float, reference: float) -> float:
-        value = max(0.0, value)
-        return clamp(math.log1p(value) / math.log1p(reference), 0.0, 1.0)
-
-    def _raw_score(self, f: MMFeatures) -> float:
+    def _raw_score(self, freq: float, amp: float, scl: float) -> float:
         w_freq, w_amp, w_scl = self.weights
-        freq_n = self._normalize_log(f.scr_frequency_per_min, self.freq_ref)
-        amp_n = self._normalize_log(f.scr_amplitude, self.amp_ref)
-        scl_n = self._normalize_log(f.scl_microsiemens, self.scl_ref_us)
-        return clamp((w_freq * freq_n) + (w_amp * amp_n) + (w_scl * scl_n), 0.0, 1.0)
+        freq_n = max(
+            0.0, min(1.0, math.log1p(max(0.0, freq)) / math.log1p(self.freq_ref))
+        )
+        amp_n = max(0.0, min(1.0, math.log1p(max(0.0, amp)) / math.log1p(self.amp_ref)))
+        scl_n = max(
+            0.0, min(1.0, math.log1p(max(0.0, scl)) / math.log1p(self.scl_ref_us))
+        )
+        return max(0.0, min(1.0, (w_freq * freq_n) + (w_amp * amp_n) + (w_scl * scl_n)))
 
     def update_scr_features(
         self,
@@ -212,7 +103,9 @@ class MMLikeScorer:
 
     def update(
         self,
-        features: MMFeatures,
+        scr_frequency_per_min: float,
+        scr_amplitude: float,
+        scl_microsiemens: float,
         now: datetime | None = None,
     ) -> dict[str, float | bool]:
         """Update scorer with new features and return score state."""
@@ -221,7 +114,7 @@ class MMLikeScorer:
         if self.started_at is None:
             self.started_at = now
 
-        raw = self._raw_score(features)
+        raw = self._raw_score(scr_frequency_per_min, scr_amplitude, scl_microsiemens)
         self.latest_raw_score = raw
 
         if self.calibration_min is None or raw < self.calibration_min:
@@ -231,7 +124,9 @@ class MMLikeScorer:
 
         if self.is_calibrated(now):
             span = self.calibration_max - self.calibration_min
-            scaled = 1.0 + 99.0 * clamp((raw - self.calibration_min) / span, 0.0, 1.0)
+            scaled = 1.0 + 99.0 * max(
+                0.0, min(1.0, (raw - self.calibration_min) / span)
+            )
             self.latest_scaled_score = scaled
         else:
             self.latest_scaled_score = None

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from .connector import NuanicConnector
-from .mm_compat import MMFeatures, MMLikeScorer, convert_eda
+from .mm_compat import MMLikeScorer
 from .signal_processing import SignalConditioner
 
 _log = logging.getLogger(__name__)
@@ -301,38 +301,34 @@ class NuanicMonitor:
             parts.append(suffix)
         return "_".join(parts) + ".csv"
 
-    def _initialize_single_log(
-        self,
-        state: RingDeviceState,
-        suffix: str,
-        header: List[str],
-        file_attr: str,
-        queue_attr: str,
-        task_attr: str,
-    ) -> None:
-        if not self.enable_logging or getattr(state, file_attr):
-            return
+    def _open_log_file(
+        self, state: RingDeviceState, suffix: str, header: List[str]
+    ) -> Path | None:
+        """Create a CSV log file with header row, return its path or None."""
+        if not self.enable_logging:
+            return None
         filename = self._log_filename(state, suffix)
         session_folder = self.log_dir / f"SessionDate_{self.session_timestamp}" / "csvs"
         session_folder.mkdir(parents=True, exist_ok=True)
         file_path = session_folder / filename
-        setattr(state, file_attr, file_path)
         try:
             with open(file_path, "w", newline="", encoding="utf-8") as f:
                 csv.writer(f).writerow(header)
-            queue = getattr(state, queue_attr)
-            if queue:
-                task = asyncio.create_task(
-                    self._csv_writer_loop(state, queue, file_path)
-                )
-                setattr(state, task_attr, task)
             _log.info("Started log for %s: %s", state.mac, filename)
+            return file_path
         except Exception as e:
             _log.error("Error initializing log for %s: %s", state.mac, e)
-            setattr(state, file_attr, None)
+            return None
+
+    def _start_writer(
+        self, state: RingDeviceState, queue: asyncio.Queue[List[Any]], file_path: Path
+    ) -> asyncio.Task[None]:
+        return asyncio.create_task(self._csv_writer_loop(state, queue, file_path))
 
     def _initialize_log_file(self, state: RingDeviceState) -> None:
         """Lazily initialize the CSV log file only when data starts arriving."""
+        if state.log_file or not state.log_queue:
+            return
         if self.csv_layout == "nuanic":
             header = ["address", "time_unix", "time", "dne", "srl", "srrn", "eda"]
         else:
@@ -357,12 +353,16 @@ class NuanicMonitor:
                 "Equalize_Mode",
                 "Equalize_WouldDrop",
             ]
-        self._initialize_single_log(
-            state, "", header, "log_file", "log_queue", "writer_task"
-        )
+        state.log_file = self._open_log_file(state, "", header)
+        if state.log_file and state.log_queue:
+            state.writer_task = self._start_writer(
+                state, state.log_queue, state.log_file
+            )
 
     def _initialize_split_log_files(self, state: RingDeviceState) -> None:
         """Lazily initialize raw-stream and computed CSV files."""
+        if state.stream_log_file or not state.stream_log_queue:
+            return
         stream_header = [
             "timestamp",
             "elapsed_ms",
@@ -404,25 +404,23 @@ class NuanicMonitor:
             "marker_label",
             "marker_source",
         ]
-        self._initialize_single_log(
-            state,
-            "streamed",
-            stream_header,
-            "stream_log_file",
-            "stream_log_queue",
-            "stream_writer_task",
+        state.stream_log_file = self._open_log_file(state, "streamed", stream_header)
+        if state.stream_log_file and state.stream_log_queue:
+            state.stream_writer_task = self._start_writer(
+                state, state.stream_log_queue, state.stream_log_file
+            )
+        state.computed_log_file = self._open_log_file(
+            state, "computed", computed_header
         )
-        self._initialize_single_log(
-            state,
-            "computed",
-            computed_header,
-            "computed_log_file",
-            "computed_log_queue",
-            "computed_writer_task",
-        )
+        if state.computed_log_file and state.computed_log_queue:
+            state.computed_writer_task = self._start_writer(
+                state, state.computed_log_queue, state.computed_log_file
+            )
 
     def _initialize_imu_log_file(self, state: RingDeviceState) -> None:
         """Lazily initialize the dedicated IMU CSV file."""
+        if state.imu_log_file or not state.imu_log_queue:
+            return
         header = [
             "timestamp",
             "elapsed_ms",
@@ -434,14 +432,11 @@ class NuanicMonitor:
             "z",
             "marker",
         ]
-        self._initialize_single_log(
-            state,
-            "imu",
-            header,
-            "imu_log_file",
-            "imu_log_queue",
-            "imu_writer_task",
-        )
+        state.imu_log_file = self._open_log_file(state, "imu", header)
+        if state.imu_log_file and state.imu_log_queue:
+            state.imu_writer_task = self._start_writer(
+                state, state.imu_log_queue, state.imu_log_file
+            )
 
     async def _csv_writer_loop(
         self,
@@ -741,20 +736,17 @@ class NuanicMonitor:
                 eda_value = parsed["eda_value"]
                 dne_stress_index = parsed["dne_stress_index"]
 
-                resistance_kohm, conductance_us = convert_eda(eda_value)
+                resistance_kohm = eda_value / 1000.0
+                conductance_us = (
+                    (1000.0 / resistance_kohm) if resistance_kohm > 0 else 0.0
+                )
                 filtered_us = (
                     conductance_us
                     if self.raw_signal
                     else state.signal_conditioner.process(conductance_us)
                 )
                 freq, amp = state.scorer.update_scr_features(tonic_value=filtered_us)
-                score_state = state.scorer.update(
-                    MMFeatures(
-                        scr_frequency_per_min=freq,
-                        scr_amplitude=amp,
-                        scl_microsiemens=filtered_us,
-                    )
-                )
+                score_state = state.scorer.update(freq, amp, filtered_us)
 
                 state.raw_eda = eda_value
                 state.filtered_us = filtered_us
@@ -1026,13 +1018,7 @@ class NuanicMonitor:
                     freq, amp = state.scorer.update_scr_features(
                         tonic_value=filtered_us
                     )
-                    score_state = state.scorer.update(
-                        MMFeatures(
-                            scr_frequency_per_min=freq,
-                            scr_amplitude=amp,
-                            scl_microsiemens=filtered_us,
-                        )
-                    )
+                    score_state = state.scorer.update(freq, amp, filtered_us)
                     state.arousal_score = score_state["mm_like_1_to_100"]
                     state.mm_arousal_wave.append(state.arousal_score)
                     state.mm_calibration_remaining = score_state[

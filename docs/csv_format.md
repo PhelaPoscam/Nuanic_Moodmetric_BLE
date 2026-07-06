@@ -217,17 +217,6 @@ $$\text{IMU\_Motion\_Intensity} = \sigma(\text{Magnitude}_{1..14})$$
 
 ## 🛠️ Offline Parsing & Analysis
 
-When analyzing the CSV files in Python (e.g., using Pandas), be aware of the following renaming mapping applied internally by the `nuanic-ring-analyzer` CLI command (defined in `data_analysis.py`):
-
-```python
-col_map = {
-    "EDA_Raw_Value": "stress_raw",
-    "Stress_Index": "stress_percent",
-    "payload_hex": "eda_hex",
-    "full_packet_hex": "packets",
-}
-```
-
 ### Loading the Data in Python
 
 Choose the files that match your `--csv-layout` setting:

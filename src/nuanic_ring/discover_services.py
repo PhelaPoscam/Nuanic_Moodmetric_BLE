@@ -32,9 +32,9 @@ except ModuleNotFoundError:
     )
     raise SystemExit(1)
 
-SERVICE_UUID = "5491faaf-b0c2-4167-8f3d-bc6b31db69e7"
-BUFFER_CHAR = "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"
-ALGO_1MIN_NOTIFY = "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
+SERVICE_UUID = NuanicConnector.NUANIC_SERVICE_UUID
+STORAGE_UUID = NuanicConnector.STORAGE_UUID
+LIVE_EDA_UUID = NuanicConnector.LIVE_EDA_UUID
 
 WRITE_ONLY_CHARS = {
     "2175c13f-60e4-4de5-80af-0d06f1b54880": "WRITE_1",
@@ -336,7 +336,7 @@ async def profile_notify(client, chars, seconds: int):
             print(f"  first: {st.first_packet.hex()[:64]}...")
             print(f"  last:  {st.last_packet.hex()[:64]}...")
             print(f"  int16 summary: {summarize_i16(st.first_packet)}")
-        if key == ALGO_1MIN_NOTIFY.lower() and st.count == 0:
+        if key == LIVE_EDA_UUID.lower() and st.count == 0:
             print("  note: algo/dne notify remained silent in this run")
 
 
@@ -370,7 +370,7 @@ async def inspect_buffer(client, polls: int, interval: float):
     previous = None
     for idx in range(max(1, polls)):
         try:
-            data = bytes(await client.read_gatt_char(BUFFER_CHAR))
+            data = bytes(await client.read_gatt_char(STORAGE_UUID))
             changed = previous is not None and previous != data
             print(
                 f"[BUF {idx+1}] {len(data)} bytes | changed={changed} | first32={data.hex()[:64]}..."
@@ -589,10 +589,10 @@ async def run_diagnostics(
         available_uuids = {
             char.uuid.lower() for _service, char in iter_all_chars(client)
         }
-        if BUFFER_CHAR.lower() not in available_uuids:
+        if STORAGE_UUID.lower() not in available_uuids:
             print(
                 "[SKIP] Buffer inspection skipped: target buffer characteristic "
-                f"{BUFFER_CHAR} is not exposed by this device profile."
+                f"{STORAGE_UUID} is not exposed by this device profile."
             )
             return 0
         await inspect_buffer(client, polls=buffer_poll, interval=buffer_interval)

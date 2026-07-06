@@ -34,10 +34,6 @@ class SignalConditioner:
         self.zi_base = signal.lfilter_zi(self.b, self.a)
         self.z = None
 
-    def _reset_state(self) -> None:
-        self.median_buffer.clear()
-        self.z = None
-
     def process(self, value: float) -> float:
         """Process a single data point in real-time.
 
@@ -48,7 +44,8 @@ class SignalConditioner:
             The filtered data point.
         """
         if not math.isfinite(value):
-            self._reset_state()
+            self.median_buffer.clear()
+            self.z = None
             return float("nan")
 
         if self.z is None:

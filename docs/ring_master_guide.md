@@ -58,12 +58,6 @@ nuanic-ring-monitor --mode raw_eda
 nuanic-ring-monitor --mode standby
 ```
 
-### Analyze Logs
-
-```bash
-nuanic-ring-analyzer data/ring_logs/my_session.csv
-```
-
 ### Discover Services
 
 ```bash

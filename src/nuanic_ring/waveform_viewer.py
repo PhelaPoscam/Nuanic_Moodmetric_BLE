@@ -1,34 +1,17 @@
-"""Standalone live viewer for Juho-like Nuanic streams.
-
-Plots (UUID-anchored, candidate semantics):
+"""Standalone live viewer for Nuanic ring telemetry streams.
 
 ponytail: matplotlib runs in a thread pool (run_in_executor) so the GUI
 event loop never shares a thread with asyncio. Shared state guarded by
 threading.Lock.
-- 42dcb71b LIVE_EDA signal metric (HQI ohm or fallback int16 mean-abs)
-- 42dcb71b LIVE_EDA ohm (when HQI 14-byte packets are available)
-- d306262b LIVE_DNA word0..word3 (uint32 little-endian)
-
-Notes:
-- word0 is treated as a clock/timestamp candidate and shown as diagnostics text (not plotted as waveform).
-- word1 is often constant 0 in current captures (context/session candidate).
-- word3 appears closer to a DNE/MM-like index candidate than a generic quality score.
 """
 
 import asyncio
-import math
-import struct
 import threading
 import time
-from collections import deque
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import Any, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
-
-from .connector import NuanicConnector
-from .mm_compat import MMFeatures, MMLikeScorer, convert_eda
-from .signal_processing import SignalConditioner
 
 
 def smooth_data(data: "Sequence[Any]", window: int) -> list:
@@ -43,193 +26,6 @@ def smooth_data(data: "Sequence[Any]", window: int) -> list:
     pad_length = len(data) - len(smoothed)
     padded = np.pad(smoothed, (pad_length, 0), mode="edge")
     return padded.tolist()
-
-
-class WaveformState:
-    """Thread-safe container for live buffers used by the plotter."""
-
-    def __init__(self, history_points: int = 600):
-        self.lock = threading.Lock()
-
-        self.live_eda_packets = 0
-        self.live_dna_packets = 0
-        self.latest_eda_mode = "none"
-
-        self.live_eda_signal_index: deque[float] = deque(maxlen=history_points)
-        self.live_eda_signal_wave: deque[float] = deque(maxlen=history_points)
-        self.live_eda_ohm_index: deque[float] = deque(maxlen=history_points)
-        self.live_eda_ohm_wave: deque[float] = deque(maxlen=history_points)
-
-        self.live_dna_index: deque[float] = deque(maxlen=history_points)
-        self.live_dna_pc_seconds: deque[float] = deque(maxlen=history_points)
-        self.live_dna_word0: deque[float] = deque(maxlen=history_points)
-        self.live_dna_word1: deque[float] = deque(maxlen=history_points)
-        self.live_dna_word2: deque[float] = deque(maxlen=history_points)
-        self.live_dna_word3: deque[float] = deque(maxlen=history_points)
-
-        self.imu_packets = 0
-        self.imu_index: deque[float] = deque(maxlen=history_points)
-        self.imu_intensity: deque[float] = deque(maxlen=history_points)
-
-        self.mm_arousal_wave: deque[float] = deque(maxlen=history_points)
-        self.mm_filtered_us_wave: deque[float] = deque(maxlen=history_points)
-        self.mm_calibration_remaining = 0.0
-        self.mm_calibrated = False
-
-
-class NuanicWaveformViewer:
-    """Connects to ring and exposes LIVE_EDA/LIVE_DNA data for plotting."""
-
-    def __init__(
-        self,
-        ring_addr: str | None = None,
-        calibration_seconds: int = 60,
-        target_hz: float | None = None,
-        attempt_rate_control: bool = False,
-        raw_signal: bool = False,
-        initial_mode: int | None = None,
-    ):
-        self.connector = NuanicConnector(target_address=ring_addr)
-        self.state = WaveformState()
-        self.signal_conditioner = SignalConditioner()
-        self.raw_signal = raw_signal
-        self.scorer = MMLikeScorer(calibration_seconds=calibration_seconds)
-        self.target_hz = target_hz
-        self.attempt_rate_control = attempt_rate_control
-        self.initial_mode = initial_mode
-        self._running = False
-
-    def _live_eda_callback(self, sender, data):
-        with self.state.lock:
-            self.state.live_eda_packets += 1
-            packet_id = self.state.live_eda_packets
-
-            # Juho decode path: 14-byte <HQI packet
-            if len(data) == 14:
-                _boot_count, _timestamp_ms, eda_ohm = struct.unpack("<HQI", bytes(data))
-                signal_value = float(eda_ohm)
-                self.state.latest_eda_mode = "HQI"
-
-                self.state.live_eda_ohm_index.append(packet_id)
-                self.state.live_eda_ohm_wave.append(float(eda_ohm))
-
-                self.state.live_eda_signal_index.append(packet_id)
-                self.state.live_eda_signal_wave.append(signal_value)
-                return
-
-            # Fallback decode: int16 stream -> mean(abs(sample))
-            if len(data) >= 2 and len(data) % 2 == 0:
-                sample_count = len(data) // 2
-                samples = struct.unpack("<" + ("h" * sample_count), bytes(data))
-                mean_abs = sum(abs(int(v)) for v in samples) / max(1, sample_count)
-
-                self.state.latest_eda_mode = "int16"
-                self.state.live_eda_signal_index.append(packet_id)
-                self.state.live_eda_signal_wave.append(float(mean_abs))
-                return
-
-            # Unknown payload shape, keep packet count only.
-            self.state.latest_eda_mode = "raw"
-
-    def _live_dna_callback(self, sender, data):
-        if len(data) != 16:
-            return
-
-        word0, word1, word2, word3 = struct.unpack("<IIII", bytes(data))
-        _res, conductance_us = convert_eda(word2)
-
-        with self.state.lock:
-            self.state.live_dna_packets += 1
-            packet_id = self.state.live_dna_packets
-            self.state.live_dna_index.append(packet_id)
-            self.state.live_dna_pc_seconds.append(time.perf_counter())
-            self.state.live_dna_word0.append(float(word0))
-            self.state.live_dna_word1.append(float(word1))
-            self.state.live_dna_word2.append(float(word2))
-            self.state.live_dna_word3.append(float(word3))
-
-            # Process through Physiological Pipeline
-            filtered_us = (
-                conductance_us
-                if self.raw_signal
-                else self.signal_conditioner.process(conductance_us)
-            )
-            freq, amp = self.scorer.update_scr_features(tonic_value=filtered_us)
-            features = MMFeatures(
-                scr_frequency_per_min=freq,
-                scr_amplitude=amp,
-                scl_microsiemens=filtered_us,
-            )
-            score_state = self.scorer.update(features)
-
-            self.state.mm_arousal_wave.append(score_state["mm_like_1_to_100"])
-            self.state.mm_filtered_us_wave.append(filtered_us)
-            self.state.mm_calibration_remaining = score_state[
-                "calibration_seconds_remaining"
-            ]
-            self.state.mm_calibrated = score_state["calibrated"]
-
-    def _imu_callback(self, sender, data):
-        if len(data) != 92:
-            return
-
-        offset = 8
-        mags = []
-        for _ in range(14):
-            x, y, z = struct.unpack_from("<hhh", bytes(data), offset)
-            mags.append(math.sqrt((x * x) + (y * y) + (z * z)))
-            offset += 6
-
-        intensity = sum(mags) / max(1, len(mags))
-
-        with self.state.lock:
-            self.state.imu_packets += 1
-            self.state.imu_index.append(self.state.imu_packets)
-            self.state.imu_intensity.append(intensity)
-
-    async def connect_and_subscribe(self) -> bool:
-        if not await self.connector.connect():
-            return False
-
-        if self.attempt_rate_control and self.target_hz:
-            print(f"[RATE] Requesting {self.target_hz} Hz sample rate...")
-            await self.connector.attempt_set_sample_rate(target_hz=int(self.target_hz))
-
-        if self.initial_mode is not None:
-            print(f"[MODE] Setting ring to mode 0x{self.initial_mode & 0xFF:02X}...")
-            await self.connector.set_mode(self.initial_mode)
-
-        live_dna_ok = await self.connector.subscribe_to_stress(self._live_dna_callback)
-        imu_ok = await self.connector.subscribe_to_imu(self._imu_callback)
-        live_eda_ok = await self.connector.subscribe_to_live_eda(
-            self._live_eda_callback
-        )
-
-        if not (live_dna_ok and imu_ok and live_eda_ok):
-            print("[WARN] Some telemetry streams failed to subscribe")
-            if not live_dna_ok:
-                await self.connector.unsubscribe_from_stress()
-                await self.connector.unsubscribe_from_imu()
-                await self.connector.unsubscribe_from_live_eda()
-                await self.connector.disconnect()
-                return False
-
-        self._running = True
-        return True
-
-    async def run_until_stopped(self):
-        try:
-            while self._running:
-                await asyncio.sleep(0.1)
-        finally:
-            await self.stop()
-
-    async def stop(self):
-        self._running = False
-        await self.connector.unsubscribe_from_stress()
-        await self.connector.unsubscribe_from_imu()
-        await self.connector.unsubscribe_from_live_eda()
-        await self.connector.disconnect()
 
 
 def _autoscale_axis(
@@ -253,8 +49,6 @@ def _autoscale_axis(
     ymin = min(y_smooth)
     ymax = max(y_smooth)
     if ymin == ymax:
-        # Use a very small pad if we're dealing with uS (usually < 10)
-        # but a larger one for scores or integers.
         if abs(ymin) < 100:
             pad = max(0.001, abs(float(ymin)) * 0.01)
         else:

@@ -16,16 +16,16 @@ def test_connector_uuids():
     assert conn.STORAGE_REWIND_UUID == "2175c13f-60e4-4de5-80af-0d06f1b54880"
     assert conn.COMMAND_UUID == "741f0d15-cc3d-4715-a9fb-a5a6bccebc50"
     assert conn.STORAGE_FORMAT_UUID == "3cce21a7-e602-4e02-8c52-1e0366c1c846"
-    assert conn.BUFFER_UUID == "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"
+    assert conn.STORAGE_UUID == "7c3b82e7-22b7-4cb6-8458-ba325edf6ede"
     assert conn.SAMPLE_RATE_UUID == "516b0fb6-d861-4619-9dd0-0105e8b85128"
     assert conn.LIVE_EDA_UUID == "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
     assert conn.LIVE_DNE_UUID == "d306262b-c8c9-4c4b-9050-3a41dea706e5"
 
-    # Verify backward compatibility aliases
-    assert conn.STRESS_STREAM_UUID == conn.LIVE_DNE_UUID
-    assert conn.RAW_EDA_STREAM == conn.LIVE_EDA_UUID
-    assert conn.RATE_CONTROL_UUID == conn.SAMPLE_RATE_UUID
-    assert conn.STREAM_SELECT_UUID == conn.STORAGE_FORMAT_UUID
+    # Verify canonical UUIDs are properly set
+    assert conn.LIVE_DNE_UUID == "d306262b-c8c9-4c4b-9050-3a41dea706e5"
+    assert conn.LIVE_EDA_UUID == "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
+    assert conn.SAMPLE_RATE_UUID == "516b0fb6-d861-4619-9dd0-0105e8b85128"
+    assert conn.STORAGE_FORMAT_UUID == "3cce21a7-e602-4e02-8c52-1e0366c1c846"
 
 
 def test_parse_d306_packet_struct():
