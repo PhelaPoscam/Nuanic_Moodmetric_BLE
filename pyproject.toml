@@ -47,8 +47,6 @@ Repository = "https://github.com/PhelaPoscam/Nuanic_Moodmetric_BLE"
 
 [project.scripts]
 nuanic-ring-monitor = "nuanic_ring.cli:ring_monitor"
-nuanic-ring-analyzer = "nuanic_ring.cli:ring_analyzer"
-nuanic-ring-post-analysis = "nuanic_ring.cli:ring_post_analysis"
 nuanic-ring-discover = "nuanic_ring.discover_services:main"
 
 [tool.setuptools.packages.find]

@@ -62,7 +62,6 @@ nuanic-ring-monitor --mode standby
 
 ```bash
 nuanic-ring-analyzer data/ring_logs/my_session.csv
-nuanic-ring-post-analysis --latest 2
 ```
 
 ### Discover Services

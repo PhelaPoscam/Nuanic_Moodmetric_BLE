@@ -304,7 +304,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--raw", action="store_true", help="Bypass signal conditioner, stream raw EDA"
     )
-    parser.add_argument("--post-analysis", choices=["yes", "no"], default="no")
     parser.add_argument("--list-rings", action="store_true")
     parser.add_argument("--discover", action="store_true")
     parser.add_argument(
@@ -621,61 +620,4 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
     finally:
         await monitor.stop_multi()
 
-    if args.post_analysis == "yes" and args.enable_logging:
-        if not _check_dependency("pandas") or not _check_dependency("numpy"):
-            return 1
-        from nuanic_ring.post_analysis import (
-            analyze_latest_ring_logs,
-            format_analysis_report,
-        )
-
-        results = analyze_latest_ring_logs(log_dir=args.log_dir, latest_n=2)
-        console.print(format_analysis_report(results))
-    return 0
-
-
-def ring_analyzer() -> int:
-    """Entry point for nuanic-ring-analyzer command."""
-    if not _check_dependency("pandas") or not _check_dependency("numpy"):
-        return 1
-    from nuanic_ring.data_analysis import print_export_fit_report, print_report
-
-    parser = argparse.ArgumentParser(description="Analyze ring CSV log files")
-    parser.add_argument("filepath", help="Path to CSV log file")
-    parser.add_argument(
-        "--fit-mm", action="store_true", help="Attempt MM-like equation fit"
-    )
-    args = parser.parse_args()
-
-    filepath = Path(args.filepath)
-    if not filepath.exists():
-        print(f"[ERROR] File not found: {filepath}")
-        return 1
-
-    try:
-        if args.fit_mm and print_export_fit_report(str(filepath)):
-            return 0
-        print_report(str(filepath))
-        return 0
-    except Exception as e:
-        print(f"[ERROR] Analysis failed: {e}")
-        return 1
-
-
-def ring_post_analysis() -> int:
-    """Entry point for nuanic-ring-post-analysis command."""
-    if not _check_dependency("pandas") or not _check_dependency("numpy"):
-        return 1
-    from nuanic_ring.post_analysis import (
-        analyze_latest_ring_logs,
-        format_analysis_report,
-    )
-
-    parser = argparse.ArgumentParser(description="Analyze latest ring CSV logs")
-    parser.add_argument("--log-dir", default="data/ring_logs")
-    parser.add_argument("--latest", type=int, default=2)
-    args = parser.parse_args()
-
-    results = analyze_latest_ring_logs(log_dir=args.log_dir, latest_n=args.latest)
-    print(format_analysis_report(results))
     return 0

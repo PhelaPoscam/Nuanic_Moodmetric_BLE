@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased — 2026-07-03
 
+### Removed
+- `nuanic-ring-analyzer` and `nuanic-ring-post-analysis` CLI entry points, along with `data_analysis.py` and `post_analysis.py` modules — offline CSV analysis and algorithm curve-fitting are obsolete as the SDK focuses on core BLE data extraction and monitoring.
+- `scripts/` directory (3 probe scripts) — one-off RE experiments replaced by the cleaner `NuanicConnector` API.
+- `moodmetric_parser.py` — legacy Moodmetric UUID parser; no internal consumers, no tests.
+
 ### Added
 - **Mode switching API** on `NuanicConnector`:
   - `set_mode(mode)` — write to `CONFIG_3` to switch operational modes
@@ -11,10 +16,6 @@ All notable changes to this project are documented in this file.
   - `read_buffer()` — read flash storage buffer (`7c3b82e7`)
   - Mode constants: `MODE_STANDBY`, `MODE_RAW_EDA`, `MODE_LIVE`, `MODE_RESEARCH`
 - `NuanicMonitor` accepts `initial_mode` parameter for mode-on-connect
-- **RE probe scripts** in `scripts/`:
-  - `probe_mode_switch.py` — systematic long-window mode-switch probing
-  - `probe_algo_stream.py` — capture & decode 42dcb71b ALGO stream
-  - `probe_flash_storage.py` — dual-mode A/B comparison (0x02 vs 0x03)
 
 ### Added (July 2026 firmware update)
 - `sync_time()` — auto-sync on connect + manual CLI `--sync-time` (`dc9c31a7`, `<Q`)

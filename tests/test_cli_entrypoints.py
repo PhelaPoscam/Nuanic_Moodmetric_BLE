@@ -12,14 +12,6 @@ def test_ring_monitor_entrypoint_is_callable():
     assert callable(cli.ring_monitor)
 
 
-def test_ring_analyzer_entrypoint_is_callable():
-    assert callable(cli.ring_analyzer)
-
-
-def test_ring_post_analysis_entrypoint_is_callable():
-    assert callable(cli.ring_post_analysis)
-
-
 def test_ring_discover_services_entrypoint_is_callable():
     assert callable(discover_services.main)
 
