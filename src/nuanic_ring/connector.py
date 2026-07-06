@@ -103,12 +103,14 @@ class NuanicConnector:
         target_address: Optional[str] = None,
         unpair_on_disconnect: bool = False,
         pair_on_connect: bool = True,
+        auto_sync_time: bool = True,
     ) -> None:
         self.max_connect_attempts = max_connect_attempts
         self.connect_backoff_seconds = connect_backoff_seconds
         self.target_address: Optional[str] = target_address
         self.unpair_on_disconnect = unpair_on_disconnect
         self.pair_on_connect = pair_on_connect
+        self.auto_sync_time = auto_sync_time
         self.client: Optional[BleakClient] = None
         self.device: Optional[Any] = None
         self._disconnect_event = asyncio.Event()
@@ -442,14 +444,15 @@ class NuanicConnector:
                 _save_last_address(address)
 
                 # Automatic boot time sync to resolve 1970 timestamp epoch
-                try:
-                    await self.sync_time(address=address)
-                except Exception as sync_exc:
-                    _log.debug(
-                        "Automatic clock sync on boot failed for %s: %s",
-                        address,
-                        sync_exc,
-                    )
+                if self.auto_sync_time:
+                    try:
+                        await self.sync_time(address=address)
+                    except Exception as sync_exc:
+                        _log.debug(
+                            "Automatic clock sync on boot failed for %s: %s",
+                            address,
+                            sync_exc,
+                        )
 
                 return True
             except asyncio.CancelledError:

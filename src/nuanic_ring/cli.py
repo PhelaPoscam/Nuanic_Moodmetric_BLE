@@ -174,7 +174,7 @@ def _parse_marker_label(raw_line: str) -> str | None:
     if lower.startswith("marker "):
         label = line[7:].strip()
         return label or None
-    if line.startswith("/"):
+    if lower.startswith("/m ") or lower.startswith("marker "):
         return None
     return line
 
@@ -439,7 +439,9 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         or args.shipping_mode
         or args.download_storage
     ):
-        connector = NuanicConnector(target_address=args.ring_addr)
+        connector = NuanicConnector(
+            target_address=args.ring_addr, auto_sync_time=not args.sync_time
+        )
         if not await connector.connect():
             console.print("[red][FAIL] Could not connect to ring[/red]")
             return 1
