@@ -251,7 +251,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--nuanic-export", action="store_true", help="Output CSV in exact Nuanic format"
     )
     parser.add_argument("--imu-refresh", type=int, default=5)
-    parser.add_argument("--calibration-seconds", type=int, default=60)
+    parser.add_argument(
+        "--calibration-seconds",
+        type=int,
+        default=60,
+        help="Deprecated: no-op, hardware DNE calibration is used automatically",
+    )
     parser.add_argument("--no-clear", action="store_true")
     parser.add_argument("--ring-addr", default=None)
     parser.add_argument("--ring-addrs", default=None)

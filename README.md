@@ -41,7 +41,7 @@ pip install -e ".[dev]"
 
 ```bash
 # Start monitoring in Live mode (responsive DNE) at 16 Hz
-nuanic-ring-monitor --calibration-seconds 60 --target-hz 16 --mode live
+nuanic-ring-monitor --target-hz 16 --mode live
 
 # Switch to Raw EDA mode — pure Ohms, no onboard DNE computation
 nuanic-ring-monitor --mode raw_eda --target-hz 16
