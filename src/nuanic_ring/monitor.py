@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from .connector import NuanicConnector
-from .mm_compat import MMLikeScorer
 from .signal_processing import SignalConditioner
 
 _log = logging.getLogger(__name__)
@@ -67,11 +66,10 @@ class RingDeviceState:
     imu_intensity: Deque[float] = field(default_factory=lambda: deque(maxlen=500))
 
     mm_calibration_remaining: float = 0.0
-    mm_calibrated: bool = False
+    mm_calibrated: bool = True
 
     # Independent processing chain per ring
     signal_conditioner: SignalConditioner = field(default_factory=SignalConditioner)
-    scorer: MMLikeScorer = field(init=False)
 
     # Logging
     log_file: Optional[Path] = None
@@ -113,9 +111,6 @@ class RingDeviceState:
     rate_control_status: str = "not-attempted"
     rate_control_detail: str = ""
     heartbeat_tick: bool = False
-
-    def __post_init__(self) -> None:
-        self.scorer = MMLikeScorer(calibration_seconds=self.calibration_seconds)
 
 
 class NuanicMonitor:
@@ -745,13 +740,13 @@ class NuanicMonitor:
                     if self.raw_signal
                     else state.signal_conditioner.process(conductance_us)
                 )
-                freq, amp = state.scorer.update_scr_features(tonic_value=filtered_us)
-                score_state = state.scorer.update(freq, amp, filtered_us)
-
+                freq, amp = 0.0, 0.0
                 state.raw_eda = eda_value
                 state.filtered_us = filtered_us
-                state.arousal_score = score_state["mm_like_1_to_100"]
                 state.dne_stress_index = dne_stress_index
+                state.arousal_score = (
+                    float(dne_stress_index) if dne_stress_index is not None else 0.0
+                )
                 state.d306_buffer.append(
                     {
                         "clock": clock,
@@ -765,10 +760,8 @@ class NuanicMonitor:
                 state.live_dna_index.append(state.d306_count)
                 state.live_dna_word2.append(eda_value)
                 state.dne_stress_index_wave.append(dne_stress_index)
-                state.mm_calibration_remaining = score_state[
-                    "calibration_seconds_remaining"
-                ]
-                state.mm_calibrated = bool(score_state["calibrated"])
+                state.mm_calibration_remaining = 0.0
+                state.mm_calibrated = True
 
                 smoothed_ts, elapsed_ms = self._get_smoothed_time(state, "d306", clock)
                 _row_kw: Dict[str, Any] = {
@@ -842,7 +835,7 @@ class NuanicMonitor:
                         f"{freq:.4f}",
                         f"{amp:.4f}",
                         f"{state.arousal_score:.2f}",
-                        "1" if score_state["calibrated"] else "0",
+                        "1",
                     ]
                     + self._row_rate_tail(state, would_drop)
                     + [
@@ -1015,16 +1008,11 @@ class NuanicMonitor:
                     state.dne_stress_index = 0
                     state.dne_stress_index_wave.append(0.0)
 
-                    freq, amp = state.scorer.update_scr_features(
-                        tonic_value=filtered_us
-                    )
-                    score_state = state.scorer.update(freq, amp, filtered_us)
-                    state.arousal_score = score_state["mm_like_1_to_100"]
-                    state.mm_arousal_wave.append(state.arousal_score)
-                    state.mm_calibration_remaining = score_state[
-                        "calibration_seconds_remaining"
-                    ]
-                    state.mm_calibrated = bool(score_state["calibrated"])
+                    freq, amp = 0.0, 0.0
+                    state.arousal_score = 0.0
+                    state.mm_arousal_wave.append(0.0)
+                    state.mm_calibration_remaining = 0.0
+                    state.mm_calibrated = True
 
                 if self.csv_layout == "nuanic":
                     from datetime import timezone
@@ -1090,7 +1078,7 @@ class NuanicMonitor:
                             f"{freq:.4f}" if len(data) == 14 else "",
                             f"{amp:.4f}" if len(data) == 14 else "",
                             f"{state.arousal_score:.2f}" if len(data) == 14 else "",
-                            "1" if getattr(state, "mm_calibrated", False) else "0",
+                            "1",
                         ]
                         + self._row_rate_tail(state, would_drop)
                         + [

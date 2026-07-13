@@ -158,13 +158,9 @@ def _run_plot_blocking(
                     else getattr(state, "live_eda_count", 0)
                 )
                 imu_packets = state.imu_batch_count
-                cal_remaining = state.mm_calibration_remaining
-                calibrated = state.mm_calibrated
             else:
                 dna_x, imu_x, imu_y, eda_y, arousal_y, w2_raw = [], [], [], [], [], []
                 live_dna_packets = imu_packets = 0
-                cal_remaining = 60
-                calibrated = False
 
             _autoscale_axis(ax_raw, line_raw, dna_x, w2_raw, smooth_window)
             _autoscale_axis(ax_eda, line_eda, dna_x, eda_y, smooth_window)
@@ -175,11 +171,7 @@ def _run_plot_blocking(
             latest_arousal = arousal_y[-1] if arousal_y else 0.0
             latest_imu_val = imu_y[-1] if imu_y else 0.0
 
-            cal_status = (
-                f"CALIBRATING ({cal_remaining:.0f}s left)"
-                if not calibrated
-                else "CALIBRATED (Active)"
-            )
+            cal_status = "Hardware DNE (Active)"
 
             summary_text.set_text(
                 "Physiological Summary\n"
@@ -193,7 +185,7 @@ def _run_plot_blocking(
             )
 
             status_text.set_text(
-                f"LIVE MONITOR | Nuanic DNE: {latest_arousal:.1f} | Calibrated: {calibrated}"
+                f"LIVE MONITOR | Nuanic DNE: {latest_arousal:.1f} | Hardware DNE Active"
             )
 
             try:

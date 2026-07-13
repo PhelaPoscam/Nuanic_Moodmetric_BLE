@@ -227,7 +227,7 @@ nuanic-ring-monitor --shipping-mode --ring-addr AA:BB:CC:DD:EE:FF
 | `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
 | `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.25 |
 | `--auto-reconnect` | Automaticaly retry on connection drop. | True |
-| `--calibration-seconds` | Wait time for Arousal Scorer baseline window. | 60 |
+| `--calibration-seconds` | Deprecated (no-op, hardware DNE calibration is used automatically). | 60 |
 | `--imu-refresh` | Batch size for dashboard IMU signal updates. | 5 |
 | `--ui-refresh-ms` | Dashboard UI redraw interval. | 200ms |
 | `--rate-control` | Attempt to write sample-rate configuration to ring. | `yes` |

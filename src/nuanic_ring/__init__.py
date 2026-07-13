@@ -1,7 +1,6 @@
 """Nuanic Ring integration module"""
 
 from .connector import NuanicConnector
-from .mm_compat import MMLikeScorer
 from .monitor import NuanicMonitor
 from .ring_profiles import (
     MOODMETRIC_PROFILE,
@@ -20,7 +19,6 @@ MODE_RESEARCH = NuanicConnector.MODE_RESEARCH
 __all__ = [
     "NuanicConnector",
     "NuanicMonitor",
-    "MMLikeScorer",
     "NUANIC_PROFILE",
     "MOODMETRIC_PROFILE",
     "UNKNOWN_PROFILE",

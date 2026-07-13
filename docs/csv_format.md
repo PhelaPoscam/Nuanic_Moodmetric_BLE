@@ -196,15 +196,10 @@ $$\text{Skin Resistance } (R) = \frac{\text{EDA\_Raw\_Value} \times 1.0}{1000} \
 
 $$\text{Skin Conductance } (C) = \frac{1000}{R} \ \mu\text{S}$$
 
-### 2. Moodmetric-like Arousal Scoring
-The `MM_Arousal_Score` (1–100) is calculated in `mm_compat.py` via the following steps:
-1. **Feature Extraction**: Updates a rolling Event Detector to track **SCR frequency** (peaks per minute) and **SCR amplitude** from the filtered skin conductance signal.
-2. **Log Normalization**: Computes normalized values for SCR Frequency ($f$), SCR Amplitude ($a$), and Tonic SCL ($s$):
-   $$x_{\text{norm}} = \text{clamp}\left(\frac{\ln(1 + x)}{\ln(1 + x_{\text{ref}})}, 0, 1\right)$$
-3. **Weighting**: Computes a raw score:
-   $$\text{Raw Score} = 0.4 \cdot f_{\text{norm}} + 0.3 \cdot a_{\text{norm}} + 0.3 \cdot s_{\text{norm}}$$
-4. **Calibration**: Tracks the minimum and maximum raw scores observed during the calibration phase (configured via `--calibration-seconds`). Once calibrated (`MM_Calibrated` = `1`), it scales the raw score linearly to the `1–100` range:
-   $$\text{Arousal Score} = 1 + 99 \times \frac{\text{Raw Score} - \text{Raw Score}_{\text{min}}}{\text{Raw Score}_{\text{max}} - \text{Raw Score}_{\text{min}}}$$
+### 2. Hardware DNE Arousal Scoring
+The `MM_Arousal_Score` directly reflects the Nuanic Ring's onboard hardware DNE stress index (`dne_stress_index`) emitted in Mode `0x02` (Live) and `0x03` (Research).
+- **Hardware Calibration**: The ring firmware performs an internal 60-second hardware calibration window upon mode switch.
+- **Calibrated Flag**: `MM_Calibrated` is set to `1` (`True`) to indicate hardware-managed calibration.
 
 ### 3. IMU Motion Intensity
 The IMU stream returns batches of 14 accelerometer samples. To compute a single motion index that eliminates gravity and represents true movement, the standard deviation of the 14 acceleration magnitudes is calculated. This single 1-second resolution value is assigned to all 14 unrolled rows in the `_imu.csv` file:
