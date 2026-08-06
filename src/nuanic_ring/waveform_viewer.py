@@ -210,10 +210,9 @@ def run_waveform_viewer_sync(
     window_seconds: int = 10,
     refresh_ms: int = 120,
     smooth_window: int = 1,
-    calibration_seconds: int = 60,
     target_hz: float | None = None,
     attempt_rate_control: bool = False,
-    raw_signal: bool = False,
+    apply_filter: bool = False,
     enable_logging: bool = False,
     log_dir: str = "data/ring_logs",
     participant_id: str | None = None,
@@ -232,10 +231,9 @@ def run_waveform_viewer_sync(
         enable_logging=enable_logging,
         participant_id=participant_id,
         csv_layout=csv_layout,
-        calibration_seconds=calibration_seconds,
         target_hz=target_hz,
         attempt_ring_rate_control=attempt_rate_control,
-        raw_signal=raw_signal,
+        apply_filter=apply_filter,
         initial_mode=initial_mode,
     )
 

@@ -37,13 +37,13 @@ STORAGE_UUID = NuanicConnector.STORAGE_UUID
 LIVE_EDA_UUID = NuanicConnector.LIVE_EDA_UUID
 
 WRITE_ONLY_CHARS = {
-    "2175c13f-60e4-4de5-80af-0d06f1b54880": "WRITE_1",
+    NuanicConnector.STORAGE_REWIND_UUID: "WRITE_1",
 }
 
 WRITE_READ_CHARS = {
-    "516b0fb6-d861-4619-9dd0-0105e8b85128": "CONFIG_1",
-    "dc9c31a7-fbd3-467a-8777-10900c423d3b": "CONFIG_2",
-    "3cce21a7-e602-4e02-8c52-1e0366c1c846": "CONFIG_3",
+    NuanicConnector.SAMPLE_RATE_UUID: "CONFIG_1",
+    NuanicConnector.REALTIME_UUID: "CONFIG_2",
+    NuanicConnector.STORAGE_FORMAT_UUID: "CONFIG_3",
 }
 
 WRITE_PATTERNS = {

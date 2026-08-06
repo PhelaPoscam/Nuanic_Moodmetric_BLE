@@ -251,12 +251,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--nuanic-export", action="store_true", help="Output CSV in exact Nuanic format"
     )
     parser.add_argument("--imu-refresh", type=int, default=5)
-    parser.add_argument(
-        "--calibration-seconds",
-        type=int,
-        default=60,
-        help="Deprecated: no-op, hardware DNE calibration is used automatically",
-    )
     parser.add_argument("--no-clear", action="store_true")
     parser.add_argument("--ring-addr", default=None)
     parser.add_argument("--ring-addrs", default=None)
@@ -283,7 +277,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup-delay", type=float, default=3.0)
     parser.add_argument("--reset-bt", action="store_true")
     parser.add_argument(
-        "--raw", action="store_true", help="Bypass signal conditioner, stream raw EDA"
+        "--filter",
+        action="store_true",
+        default=False,
+        help="Apply signal conditioner (median + Butterworth lowpass) to EDA stream. Off by default.",
+    )
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        default=False,
+        help="(Deprecated) Alias for default no-filter behavior. Ignored.",
     )
     parser.add_argument("--list-rings", action="store_true")
     parser.add_argument("--discover", action="store_true")
@@ -303,8 +306,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mode",
         choices=["live", "research", "raw_eda", "standby"],
-        default="live",
-        help="Ring operational mode (default: live)",
+        default="raw_eda",
+        help="Ring operational mode (default: raw_eda for unfiltered skin conductance)",
     )
     parser.add_argument("--waveform", action="store_true")
     parser.add_argument("--markers", action="store_true")
@@ -359,7 +362,7 @@ def ring_monitor() -> int:
                 smooth_window=args.smooth,
                 target_hz=args.target_hz,
                 attempt_rate_control=(args.rate_control == "yes"),
-                raw_signal=args.raw,
+                apply_filter=args.filter,
                 enable_logging=args.enable_logging,
                 log_dir=args.log_dir,
                 participant_id=args.participant_id,
@@ -514,7 +517,6 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         clear_console=not args.no_clear,
         enable_logging=args.enable_logging,
         csv_layout=args.csv_layout,
-        calibration_seconds=args.calibration_seconds,
         target_hz=args.target_hz,
         equalize_mode=args.equalize_mode,
         attempt_ring_rate_control=(args.rate_control == "yes"),
@@ -523,7 +525,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         warmup_delay=args.warmup_delay,
         allow_reset_bt=args.reset_bt,
         participant_id=args.participant_id,
-        raw_signal=args.raw,
+        apply_filter=args.filter,
         initial_mode=_MODE_MAP[args.mode],
     )
 

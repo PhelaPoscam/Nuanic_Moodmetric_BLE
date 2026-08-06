@@ -40,11 +40,11 @@ pip install -e ".[dev]"
 ### 2. Connect & Monitor
 
 ```bash
-# Start monitoring in Live mode (responsive DNE) at 16 Hz
-nuanic-ring-monitor --target-hz 16 --mode live
+# Start monitoring in Raw EDA mode (default) — unfiltered skin resistance in Ohms
+nuanic-ring-monitor --target-hz 16
 
-# Switch to Raw EDA mode — pure Ohms, no onboard DNE computation
-nuanic-ring-monitor --mode raw_eda --target-hz 16
+# Use Live mode for onboard DNE stress index (preprocessed, firmware-filtered)
+nuanic-ring-monitor --target-hz 16 --mode live
 
 # Launch live dashboard visualization
 nuanic-ring-monitor --waveform
@@ -63,11 +63,11 @@ nuanic-ring-monitor --reset-algo --ring-addr AA:BB:CC:DD:EE:FF
 ## 🔗 Multi-Ring Setup
 
 ```bash
-# Connect to all discovered Nuanic rings in Live mode
-nuanic-ring-monitor --monitor-all --target-hz 16 --mode live
+# Connect to all discovered Nuanic rings in Raw EDA mode (default)
+nuanic-ring-monitor --monitor-all --target-hz 16
 
-# Explicitly target specific MAC addresses in Raw EDA mode
-nuanic-ring-monitor --ring-addrs MAC1,MAC2 --target-hz 16 --mode raw_eda --reset-bt
+# Explicitly target specific MAC addresses in Live mode (onboard DNE)
+nuanic-ring-monitor --ring-addrs MAC1,MAC2 --target-hz 16 --mode live --reset-bt
 ```
 
 ---
@@ -105,8 +105,8 @@ asyncio.run(run_sensor())
 The ring has 4 modes controlled via `CONFIG_3` register. Switch modes via `--mode` on the CLI or `set_mode()` in code:
 
 ```bash
-nuanic-ring-monitor --mode raw_eda    # Pure Ohms, no onboard DNE
-nuanic-ring-monitor --mode live       # Responsive DNE (default)
+nuanic-ring-monitor --mode raw_eda    # Pure Ohms, no onboard DNE (default)
+nuanic-ring-monitor --mode live       # Responsive DNE
 nuanic-ring-monitor --mode research   # Stable, long-filter DNE
 nuanic-ring-monitor --mode standby    # Physiology OFF
 ```
@@ -119,6 +119,15 @@ nuanic-ring-monitor --mode standby    # Physiology OFF
 | `MODE_RESEARCH` | `0x03` | `d306262b` (16-byte `<Qii`) | Preprocessed instant indicator + DNE score. **Long filter** — stable, reproducible. |
 
 > ⚠️ Every mode transition triggers a **60-second silent calibration window**. All physiological BLE streams are muted during this period. Writing the same mode the ring is already in is a no-op.
+
+### Phasic EDA (SCR) Notes
+
+For phasic analysis (SCR detection, onset latency, amplitude):
+
+- Use `MODE_RAW_EDA` (default) — `MODE_LIVE` / `MODE_RESEARCH` return a firmware-preprocessed "instant" indicator, not raw Ohms.
+- The default `nuanic-ring-monitor` does NOT apply any host-side filter. Pass `--filter` to opt in to the median + 1.5 Hz Butterworth lowpass. (`--raw` is deprecated and ignored — it was the old way to bypass the filter, which is now the default.)
+- Hardware ceiling: max sample rate is **16 Hz** — adequate for SCR amplitude and latency, marginal for fast waveform morphology.
+- The onboard DNE score is a tonic-level measure, not phasic. It does not show individual SCR events.
 
 For the full reverse-engineering breakdown, see [Ring Reverse-Engineering Report](docs/ring_reverse_engineering_report.md).
 
