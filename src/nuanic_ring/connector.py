@@ -294,8 +294,6 @@ class NuanicConnector:
         if target_client is None:
             return
 
-        import gc
-
         try:
             if getattr(target_client, "is_connected", False):
                 if not address:
@@ -361,9 +359,6 @@ class NuanicConnector:
                 self.client = None
             else:
                 self.clients.pop(address.upper(), None)
-
-            gc.collect()
-            await asyncio.sleep(0.5)
 
     async def connect(self):
         """Connect to Nuanic ring with automatic retry and recovery."""

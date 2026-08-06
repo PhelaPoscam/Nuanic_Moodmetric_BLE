@@ -25,7 +25,6 @@ class RingDeviceState:
     """Per-device runtime state to keep data pipelines isolated."""
 
     mac: str
-    calibration_seconds: int
     status: str = "disconnected"
     battery: Optional[int] = None
 
@@ -65,11 +64,8 @@ class RingDeviceState:
     imu_index: Deque[int] = field(default_factory=lambda: deque(maxlen=500))
     imu_intensity: Deque[float] = field(default_factory=lambda: deque(maxlen=500))
 
-    mm_calibration_remaining: float = 0.0
-    mm_calibrated: bool = True
-
-    # Independent processing chain per ring
-    signal_conditioner: SignalConditioner = field(default_factory=SignalConditioner)
+    # Independent processing chain per ring (lazy-init with actual observed Hz)
+    signal_conditioner: Optional[SignalConditioner] = None
 
     # Logging
     log_file: Optional[Path] = None
@@ -106,8 +102,6 @@ class RingDeviceState:
     last_accepted_imu_ts: Optional[datetime] = None
     d306_intervals: Deque[float] = field(default_factory=lambda: deque(maxlen=128))
     imu_intervals: Deque[float] = field(default_factory=lambda: deque(maxlen=128))
-    d306_would_drop: int = 0
-    imu_would_drop: int = 0
     rate_control_status: str = "not-attempted"
     rate_control_detail: str = ""
     heartbeat_tick: bool = False
@@ -123,7 +117,6 @@ class NuanicMonitor:
         clear_console: bool = True,
         enable_logging: bool = True,
         csv_layout: str = "combined",
-        calibration_seconds: int = 60,
         target_hz: Optional[float] = None,
         equalize_mode: str = "off",
         attempt_ring_rate_control: bool = False,
@@ -132,7 +125,7 @@ class NuanicMonitor:
         warmup_delay: float = 3.0,
         allow_reset_bt: bool = False,
         participant_id: Optional[str] = None,
-        raw_signal: bool = False,
+        apply_filter: bool = False,
         initial_mode: Optional[int] = None,
     ):
         self.log_dir = Path(log_dir)
@@ -148,14 +141,13 @@ class NuanicMonitor:
         self.connector = NuanicConnector()
         self.imu_refresh_packets = max(1, imu_refresh_packets)
         self.clear_console = clear_console
-        self.calibration_seconds = calibration_seconds
         self.target_hz = target_hz
         self.equalize_mode = equalize_mode
         self.attempt_ring_rate_control = attempt_ring_rate_control
         self.use_warmup = use_warmup
         self.warmup_delay = warmup_delay
         self.allow_reset_bt = allow_reset_bt
-        self.raw_signal = raw_signal
+        self.apply_filter = apply_filter
         self.initial_mode = initial_mode
 
         self.session_timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
@@ -168,6 +160,18 @@ class NuanicMonitor:
         self._health_task: Optional[asyncio.Task[None]] = None
         self._auto_reconnect = True
         self._reconnect_backoff_seconds = 2.0
+
+    def _get_signal_conditioner(self, state: RingDeviceState) -> SignalConditioner:
+        """Return the per-device signal conditioner, creating it lazily with the observed Hz.
+
+        The conditioner is tuned once at the first packet's observed Hz (falling
+        back to 8 Hz before the first interval is measured) and is never retuned
+        mid-session. Only affects the optional ``--filter`` path.
+        """
+        if state.signal_conditioner is None:
+            observed = max(1.0, state.d306_observed_hz or 8.0)
+            state.signal_conditioner = SignalConditioner(sample_rate=observed)
+        return state.signal_conditioner
 
     def _elapsed_seconds(self) -> float:
         if not self.start_time:
@@ -216,6 +220,17 @@ class NuanicMonitor:
             elapsed_session_ms = elapsed_ms
 
         return smoothed_ts, max(1, elapsed_session_ms)
+
+    @staticmethod
+    def _nuanic_ts_fields(ts: datetime) -> Tuple[str, str]:
+        """Return (unix_str, utc_iso_str) for the Nuanic CSV export layout."""
+        from datetime import timezone
+
+        unix_str = f"{ts.timestamp():.6f}"
+        utc_str = (
+            ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00"
+        )
+        return unix_str, utc_str
 
     def _parse_d306_packet(self, data: bytes) -> Optional[Dict[str, Any]]:
         if len(data) != 16:
@@ -269,10 +284,7 @@ class NuanicMonitor:
         if state:
             return state
 
-        state = RingDeviceState(
-            mac=mac_key,
-            calibration_seconds=self.calibration_seconds,
-        )
+        state = RingDeviceState(mac=mac_key)
         self.device_states[mac_key] = state
 
         if self.enable_logging:
@@ -592,11 +604,6 @@ class NuanicMonitor:
         current_dt = (datetime.now() - last_ts).total_seconds()
         should_drop = current_dt < target_dt
 
-        if should_drop:
-            if stream_name == "d306":
-                state.d306_would_drop += 1
-            else:
-                state.imu_would_drop += 1
         return should_drop
 
     def _row_rate_tail(
@@ -627,15 +634,16 @@ class NuanicMonitor:
             ensure_ascii=True,
         )
 
+        # Columns 5-12 of combined log, ending with JSON marker payload
         marker_fields = [
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            marker_payload,
+            "",  # EDA_Raw_Value
+            "",  # Stress_Index
+            "",  # D306_Clock
+            "",  # D306_Context
+            "",  # State_Code
+            "",  # payload_hex
+            "",  # full_packet_hex
+            marker_payload,  # decoded_fields
         ]
 
         inserted = 0
@@ -648,34 +656,36 @@ class NuanicMonitor:
                 )
                 self._enqueue_log(state, row)
 
+            # Split stream log: 8 data cols + marker_label + marker_source
             stream_row = self._base_row(state, "MARKER") + [
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
+                "",  # D306_Clock
+                "",  # D306_Context
+                "",  # EDA_Raw_Value
+                "",  # Stress_Index
+                "",  # State_Code
+                "",  # payload_hex
+                "",  # full_packet_hex
+                "",  # decoded_fields
                 clean_label,
                 source,
             ]
+            # Split computed log: 15 data cols + marker_label + marker_source
             computed_row = self._base_row(state, "MARKER") + [
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
+                "",  # Source_D306_Clock
+                "",  # Source_D306_Context
+                "",  # Skin_Resistance_kOhm
+                "",  # Skin_Conductance_uS
+                "",  # MM_Filtered_uS
+                "",  # SCR_Frequency_Per_Min
+                "",  # SCR_Amplitude
+                "",  # MM_Arousal_Score
+                "",  # MM_Calibrated
+                "",  # D306_Observed_Hz
+                "",  # IMU_Observed_Hz
+                "",  # Rate_Target_Hz
+                "",  # Rate_Control_Status
+                "",  # Equalize_Mode
+                "",  # Equalize_WouldDrop
                 clean_label,
                 source,
             ]
@@ -685,12 +695,12 @@ class NuanicMonitor:
             imu_marker_row = [
                 datetime.now().isoformat(timespec="milliseconds"),
                 int(self._elapsed_seconds() * 1000),
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
+                "",  # clock
+                "",  # context
+                "",  # motion_intensity
+                "",  # x
+                "",  # y
+                "",  # z
                 marker_payload,
             ]
             self._enqueue_imu_log(state, imu_marker_row)
@@ -736,9 +746,9 @@ class NuanicMonitor:
                     (1000.0 / resistance_kohm) if resistance_kohm > 0 else 0.0
                 )
                 filtered_us = (
-                    conductance_us
-                    if self.raw_signal
-                    else state.signal_conditioner.process(conductance_us)
+                    self._get_signal_conditioner(state).process(conductance_us)
+                    if self.apply_filter
+                    else conductance_us
                 )
                 freq, amp = 0.0, 0.0
                 state.raw_eda = eda_value
@@ -760,9 +770,6 @@ class NuanicMonitor:
                 state.live_dna_index.append(state.d306_count)
                 state.live_dna_word2.append(eda_value)
                 state.dne_stress_index_wave.append(dne_stress_index)
-                state.mm_calibration_remaining = 0.0
-                state.mm_calibrated = True
-
                 smoothed_ts, elapsed_ms = self._get_smoothed_time(state, "d306", clock)
                 _row_kw: Dict[str, Any] = {
                     "custom_ts": smoothed_ts,
@@ -770,15 +777,7 @@ class NuanicMonitor:
                 }
 
                 if self.csv_layout == "nuanic":
-                    from datetime import timezone
-
-                    ts_unix = f"{smoothed_ts.timestamp():.6f}"
-                    ts_str = (
-                        smoothed_ts.astimezone(timezone.utc).strftime(
-                            "%Y-%m-%d %H:%M:%S.%f"
-                        )[:-3]
-                        + "+00"
-                    )
+                    ts_unix, ts_str = self._nuanic_ts_fields(smoothed_ts)
 
                     # Compute SRL (Tonic Resistance in Ohms) from our Filtered Conductance
                     srl_ohms = int(1_000_000 / filtered_us) if filtered_us > 0 else 0
@@ -997,9 +996,9 @@ class NuanicMonitor:
                     # Update state telemetry for Mode 1 (MODE_RAW_EDA / 42dc)
                     state.raw_eda = eda_ohm
                     filtered_us = (
-                        cond_us
-                        if self.raw_signal
-                        else state.signal_conditioner.process(cond_us)
+                        self._get_signal_conditioner(state).process(cond_us)
+                        if self.apply_filter
+                        else cond_us
                     )
                     state.filtered_us = filtered_us
                     state.mm_filtered_us_wave.append(filtered_us)
@@ -1011,20 +1010,14 @@ class NuanicMonitor:
                     freq, amp = 0.0, 0.0
                     state.arousal_score = 0.0
                     state.mm_arousal_wave.append(0.0)
-                    state.mm_calibration_remaining = 0.0
-                    state.mm_calibrated = True
-
                 if self.csv_layout == "nuanic":
-                    from datetime import timezone
-
-                    now_ts = datetime.now()
-                    ts_unix = f"{now_ts.timestamp():.6f}"
-                    ts_str = (
-                        now_ts.astimezone(timezone.utc).strftime(
-                            "%Y-%m-%d %H:%M:%S.%f"
-                        )[:-3]
-                        + "+00"
-                    )
+                    if timestamp_ms:
+                        smoothed_ts, _ = self._get_smoothed_time(
+                            state, "d306", int(timestamp_ms)
+                        )
+                    else:
+                        smoothed_ts = now
+                    ts_unix, ts_str = self._nuanic_ts_fields(smoothed_ts)
                     srl_ohms = int(eda_ohm) if len(data) == 14 else 0
                     srrn = f"{freq:.1f}" if len(data) == 14 else "0.0"
                     eda_val = int(eda_ohm) if len(data) == 14 else 0

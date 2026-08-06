@@ -31,28 +31,28 @@ pip install -e ".[dev]"
 ### Monitor
 
 ```bash
-# Installed command
-nuanic-ring-monitor --calibration-seconds 60
+# Installed command (default: raw_eda mode, no host-side filter)
+nuanic-ring-monitor
 ```
 
 ### Multi-ring
 
 ```bash
-nuanic-ring-monitor --monitor-all --target-hz 16 --mode live
-nuanic-ring-monitor --ring-addrs MAC1,MAC2 --target-hz 16 --reset-bt --mode raw_eda
+nuanic-ring-monitor --monitor-all --target-hz 16
+nuanic-ring-monitor --ring-addrs MAC1,MAC2 --target-hz 16 --reset-bt --mode live
 ```
 
 ### Operational Modes
 
 ```bash
-# Live Mode (default) — responsive DNE + instant indicator on d306262b
+# Raw EDA Mode (default) — pure unprocessed EDA in Ohms on 42dcb71b (no onboard DNE)
+nuanic-ring-monitor --mode raw_eda
+
+# Live Mode — responsive DNE + instant indicator on d306262b
 nuanic-ring-monitor --mode live
 
 # Research Mode — stable, long-filter DNE on d306262b
 nuanic-ring-monitor --mode research
-
-# Raw EDA Mode — pure unprocessed EDA in Ohms on 42dcb71b (no onboard DNE)
-nuanic-ring-monitor --mode raw_eda
 
 # Standby — physiology OFF, IMU + finger-detect still active
 nuanic-ring-monitor --mode standby
@@ -71,10 +71,10 @@ You can switch the ring's operational mode in three ways: CLI, Python SDK, or ra
 ### 1. Via the CLI (`nuanic-ring-monitor`)
 
 ```bash
-# Raw EDA mode — 14-byte Ohms stream on 42dcb71b (no onboard DNE)
+# Raw EDA mode (default) — 14-byte Ohms stream on 42dcb71b (no onboard DNE)
 nuanic-ring-monitor --mode raw_eda
 
-# Live Mode — responsive DNE + instant indicator on d306262b (default)
+# Live Mode — responsive DNE + instant indicator on d306262b
 nuanic-ring-monitor --mode live
 
 # Research Mode — stable long-filter DNE on d306262b
@@ -82,6 +82,9 @@ nuanic-ring-monitor --mode research
 
 # Standby — physiology OFF, IMU + finger-detect still active
 nuanic-ring-monitor --mode standby
+
+# Add the host-side signal conditioner (median + 1.5 Hz Butterworth) — off by default
+nuanic-ring-monitor --mode raw_eda --filter
 ```
 
 ### 2. Via the Python SDK (`NuanicConnector`)
@@ -132,7 +135,7 @@ import asyncio
 from nuanic_ring.monitor import NuanicMonitor
 
 async def run_once():
-    monitor = NuanicMonitor(calibration_seconds=60, mode="live")
+    monitor = NuanicMonitor(initial_mode=MODE_LIVE)
     await monitor.run(duration_seconds=120)
 
 asyncio.run(run_once())
@@ -145,7 +148,7 @@ import asyncio
 from nuanic_ring import NuanicMonitor, MODE_LIVE, MODE_RAW_EDA
 
 async def run_multi():
-    monitor = NuanicMonitor(target_hz=16, calibration_seconds=60, initial_mode=MODE_RAW_EDA)
+    monitor = NuanicMonitor(target_hz=16, initial_mode=MODE_RAW_EDA)
     started = await monitor.start_multi(
         ring_addresses=["MAC1", "MAC2"],
         auto_reconnect=True,
@@ -227,7 +230,6 @@ nuanic-ring-monitor --shipping-mode --ring-addr AA:BB:CC:DD:EE:FF
 | `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
 | `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.25 |
 | `--auto-reconnect` | Automaticaly retry on connection drop. | True |
-| `--calibration-seconds` | Deprecated (no-op, hardware DNE calibration is used automatically). | 60 |
 | `--imu-refresh` | Batch size for dashboard IMU signal updates. | 5 |
 | `--ui-refresh-ms` | Dashboard UI redraw interval. | 200ms |
 | `--rate-control` | Attempt to write sample-rate configuration to ring. | `yes` |
@@ -236,7 +238,9 @@ nuanic-ring-monitor --shipping-mode --ring-addr AA:BB:CC:DD:EE:FF
 | `--scan-timeout` | Timeout per scan attempt. | 6.0s |
 | `--scan-attempts` | Number of scan attempts before giving up. | 3 |
 | `--warmup-delay` | Delay after firmware warmup before full connect. | 3.0s |
-| `--mode` | Ring operational mode: `live` (0x02), `research` (0x03), `raw_eda` (0x01), `standby` (0x00). | `live` |
+| `--mode` | Ring operational mode: `live` (0x02), `research` (0x03), `raw_eda` (0x01), `standby` (0x00). | `raw_eda` |
+| `--filter` | Apply host-side median + 1.5 Hz Butterworth lowpass to EDA. Off by default. | False |
+| `--raw` | Deprecated no-op (was the old way to bypass the filter, which is now the default). Ignored. | False |
 | `--list-rings` | Scan and list available rings, then exit. | - |
 | `--discover` | Full GATT service discovery and characteristics dump. | - |
 | `--check-flash` | Check available and used flash storage on the ring. | - |

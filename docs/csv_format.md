@@ -99,7 +99,7 @@ When using `--csv-layout split` or `both`, the computed CSV contains **22 column
 | 10 | `SCR_Frequency_Per_Min` | Float | Skin Conductance Response peak frequency. |
 | 11 | `SCR_Amplitude` | Float | Skin Conductance Response amplitude. |
 | 12 | `MM_Arousal_Score` | Float | Moodmetric-like arousal score (1–100). |
-| 13 | `MM_Calibrated` | Binary (0/1) | Whether personal baseline calibration is complete. |
+| 13 | `MM_Calibrated` | Binary (0/1) | Always `1` — legacy placeholder; no software calibration state is tracked (hardware DNE calibration is firmware-managed). |
 | 14 | `D306_Observed_Hz` | Float | Real-time measured frequency of the physiological stream. |
 | 15 | `IMU_Observed_Hz` | Float | Real-time measured frequency of the IMU stream. |
 | 16 | `Rate_Target_Hz` | Float | Requested target sampling rate for the session. |
