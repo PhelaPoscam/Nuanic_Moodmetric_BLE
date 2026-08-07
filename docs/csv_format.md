@@ -39,7 +39,7 @@ The main streaming CSV contains a fixed set of **19 columns**. Because the ring 
 | 2 | `device_mac` | MAC String | Upper-case MAC address of the source ring. |
 | 3 | `connection_state` | String | Current BLE connection state (e.g., `connected`, `connecting`, `disconnected`, `degraded`). |
 | 4 | `data_type` | Enum String | The telemetry channel of this row: `D306_EDA`, `STATE_3C18`, `LIVE_EDA_42DC`, or `MARKER`. |
-| 5 | `EDA_Raw_Value` | Integer | Raw ADC output value representing skin impedance (16-bit or 32-bit unsigned). |
+| 5 | `EDA_Raw_Value` | Integer | Skin impedance value: firmware-normalized instant indicator (`~1e6`) for D306_EDA rows, raw skin resistance in Ohms for LIVE_EDA_42DC rows. |
 | 6 | `Stress_Index` | Integer | Proprietary on-ring computed stress indicator (0–100). |
 | 7 | `D306_Clock` | Integer | Monotonic firmware clock counter from the physiological stream. |
 | 8 | `D306_Context` | Integer | Monotonic context identifier (session/warmup count) from the physiological stream. |

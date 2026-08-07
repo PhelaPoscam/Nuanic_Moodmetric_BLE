@@ -86,6 +86,9 @@ pytest_output.txt
 architecture_audit_and_roadmap.md
 diagnostic_capture_test.py
 
+# Analysis outputs (exploratory, never commit)
+analysis/
+
 # Tooling-specific ignored paths
 .commandcode/
 .agents/
