@@ -98,7 +98,7 @@ async def main():
     mac = "7C:2F:61:5F:E0:4F"
     await connector.connect_device(mac)
 
-    await connector.set_mode(MODE_RAW_EDA)   # 0x01 — Raw EDA only
+    await connector.set_mode(MODE_RAW_EDA)   # 0x01 — Raw EDA only (Ohms on 42dcb71b)
     # or MODE_LIVE, MODE_RESEARCH, MODE_STANDBY
 
 asyncio.run(main())
@@ -132,7 +132,7 @@ Write a single `uint8_t` to `STORAGE_FORMAT_UUID` (`3cce21a7-e602-4e02-8c52-1e03
 
 ```python
 import asyncio
-from nuanic_ring.monitor import NuanicMonitor
+from nuanic_ring import NuanicMonitor, MODE_LIVE
 
 async def run_once():
     monitor = NuanicMonitor(initial_mode=MODE_LIVE)
@@ -217,32 +217,41 @@ nuanic-ring-monitor --shipping-mode --ring-addr AA:BB:CC:DD:EE:FF
 | :--- | :--- | :--- |
 | `--duration` | Total session length in seconds. | Unlimited |
 | `--ring-addrs` | Comma-separated list of MAC addresses to connect. | None |
+| `--ring-addr` | Single ring MAC address (mutually exclusive with `--ring-addrs`). | None |
 | `--monitor-all` | Connect to all discovered Nuanic rings. | False |
+| `--max-devices` | Cap the number of simultaneously monitored rings. | None |
+| `--participant-id` | Participant ID prefix prepended to CSV filenames. | None |
 | `--target-hz` | Desired sampling frequency in Hz (capped between 1 and 16 Hz). | 10.0 |
 | `--force-hz` | Bypass the 16Hz hardware capability safety warning. | False |
-| `--reset-bt` | Aggressively reset Windows BT radio on initial failure. | False |
+| `--rate-control` | Attempt to write sample-rate configuration to ring (`yes`/`no`). | `yes` |
+| `--equalize-mode` | Logic for handling rate mismatches (`off`, `log-only`, `enforce`). | `log-only` |
 | `--log` / `--no-log` | Enable or disable CSV recording. | `--log` |
 | `--log-dir` | Folder for session CSV output. | `data/ring_logs` |
-| `--waveform` | Launch live Matplotlib plots instead of the TUI table. | False |
-| `--markers` | Enable runtime marker input (SPACE and single-key hotkeys, plus `/m LABEL` + Enter). | False |
-| `--marker-hotkey` | Add or override a single-key marker hotkey. Repeatable. | `SPACE=marker, S=stimulus_on, B=baseline_start, R=rest_start` |
-| `--post-analysis` | Print a scoring comparison vs proprietary DNE on exit. | No |
-| `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
-| `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.25 |
-| `--auto-reconnect` | Automaticaly retry on connection drop. | True |
-| `--imu-refresh` | Batch size for dashboard IMU signal updates. | 5 |
-| `--ui-refresh-ms` | Dashboard UI redraw interval. | 200ms |
-| `--rate-control` | Attempt to write sample-rate configuration to ring. | `yes` |
-| `--equalize-mode` | Logic for handling rate mismatches (`off`, `log-only`, `enforce`). | `log-only` |
-| `--max-devices` | Cap the number of simultaneously monitored rings. | None |
-| `--scan-timeout` | Timeout per scan attempt. | 6.0s |
-| `--scan-attempts` | Number of scan attempts before giving up. | 3 |
-| `--warmup-delay` | Delay after firmware warmup before full connect. | 3.0s |
+| `--csv-layout` | CSV output layout: `combined`, `split`, or `both`. | `combined` |
+| `--nuanic-export` | Output CSV in exact Nuanic format (overrides `--csv-layout` to `nuanic`). | False |
 | `--mode` | Ring operational mode: `live` (0x02), `research` (0x03), `raw_eda` (0x01), `standby` (0x00). | `raw_eda` |
 | `--filter` | Apply host-side median + 1.5 Hz Butterworth lowpass to EDA. Off by default. | False |
 | `--raw` | Deprecated no-op (was the old way to bypass the filter, which is now the default). Ignored. | False |
-| `--list-rings` | Scan and list available rings, then exit. | - |
+| `--waveform` | Launch live Matplotlib plots instead of the TUI table. | False |
+| `--window-seconds` | [with `--waveform`] Plot window width in seconds. | 10 |
+| `--refresh-ms` | [with `--waveform`] Plot redraw interval. | 120ms |
+| `--smooth` | [with `--waveform`] EDA smoothing window size. | 1 |
+| `--markers` | Enable runtime marker input (SPACE and single-key hotkeys, plus `/m LABEL` + Enter). | False |
+| `--marker-hotkey` | Add or override a single-key marker hotkey. Repeatable. | `SPACE=marker, S=stimulus_on, B=baseline_start, R=rest_start` |
+| `--imu-refresh` | Batch size for dashboard IMU signal updates. | 5 |
+| `--ui-refresh-ms` | Dashboard UI redraw interval. | 200ms |
+| `--no-clear` | Do not clear the console before drawing the dashboard. | False |
+| `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
+| `--warmup-delay` | Delay after firmware warmup before full connect. | 3.0s |
+| `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.25 |
+| `--auto-reconnect` | Automaticaly retry on connection drop. | True |
+| `--reset-bt` | Aggressively reset Windows BT radio on initial failure. | False |
+| `--scan-timeout` | Timeout per scan attempt. | 6.0s |
+| `--scan-attempts` | Number of scan attempts before giving up. | 3 |
 | `--discover` | Full GATT service discovery and characteristics dump. | - |
+| `--subscribe-streams` | [with `--discover`] Subscribe to ring notify streams and print live data. | False |
+| `--listen-seconds` | [with `--discover --subscribe-streams`] Duration in seconds (default: until Ctrl+C). | None |
+| `--list-rings` | Scan and list available rings, then exit. | - |
 | `--check-flash` | Check available and used flash storage on the ring. | - |
 | `--sync-time` | Force send real-time clock synchronization timestamp to ring. | - |
 | `--reset-algo` | Send ASCII command `"ra"` to reset onboard DNE algorithm. | - |
