@@ -969,18 +969,14 @@ class NuanicConnector:
     ) -> Optional[Dict[str, Any]]:
         """Parse one fixed-size record from the offline flash buffer."""
         if format_type == 1:
-            boot_count, timestamp_ms, eda_ohm = struct.unpack(
-                "<HQI", record_data
-            )
+            boot_count, timestamp_ms, eda_ohm = struct.unpack("<HQI", record_data)
             return {
                 "format": "EDA",
                 "boot_count": boot_count,
                 "timestamp_ms": timestamp_ms,
                 "eda_ohm": eda_ohm,
                 "resistance_kohm": eda_ohm / 1000.0,
-                "conductance_us": (
-                    (1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0
-                ),
+                "conductance_us": ((1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0),
             }
         if format_type == 2:
             boot_count, timestamp_ms, srrn, srl, dne = struct.unpack(

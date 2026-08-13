@@ -467,7 +467,10 @@ def ring_monitor() -> int:
 
 def _cap_multi_ring_hz(console: Any, args: argparse.Namespace) -> None:
     """Warn or cap target_hz for multi-ring sessions (hardware unstable above ~16 Hz)."""
-    is_multi = args.monitor_all or len(_parse_ring_addresses(args.ring_addr, args.ring_addrs)) > 1
+    is_multi = (
+        args.monitor_all
+        or len(_parse_ring_addresses(args.ring_addr, args.ring_addrs)) > 1
+    )
     if not is_multi or not args.target_hz or args.target_hz <= 16:
         return
     if args.force_hz:
