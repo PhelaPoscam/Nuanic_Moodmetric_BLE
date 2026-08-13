@@ -536,28 +536,36 @@ class NuanicMonitor:
 
     def _enqueue_log(self, state: RingDeviceState, row: List[Any]) -> None:
         self._enqueue_to(
-            state, state.log_queue, row,
+            state,
+            state.log_queue,
+            row,
             file_ready=bool(state.log_file),
             initializer=self._initialize_log_file,
         )
 
     def _enqueue_stream_log(self, state: RingDeviceState, row: List[Any]) -> None:
         self._enqueue_to(
-            state, state.stream_log_queue, row,
+            state,
+            state.stream_log_queue,
+            row,
             file_ready=bool(state.stream_log_file and state.computed_log_file),
             initializer=self._initialize_split_log_files,
         )
 
     def _enqueue_computed_log(self, state: RingDeviceState, row: List[Any]) -> None:
         self._enqueue_to(
-            state, state.computed_log_queue, row,
+            state,
+            state.computed_log_queue,
+            row,
             file_ready=bool(state.stream_log_file and state.computed_log_file),
             initializer=self._initialize_split_log_files,
         )
 
     def _enqueue_imu_log(self, state: RingDeviceState, row: List[Any]) -> None:
         self._enqueue_to(
-            state, state.imu_log_queue, row,
+            state,
+            state.imu_log_queue,
+            row,
             file_ready=bool(state.imu_log_file),
             initializer=self._initialize_imu_log_file,
         )
