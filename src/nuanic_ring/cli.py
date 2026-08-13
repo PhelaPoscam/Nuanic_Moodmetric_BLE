@@ -24,6 +24,24 @@ _MODE_MAP = {
 }
 
 
+def _configure_windows_console() -> None:
+    """Force UTF-8 output on Windows consoles so rich box-drawing renders cleanly.
+
+    Without this, the legacy console codepage (e.g. cp437/cp1252) mangles
+    non-ASCII glyphs (mojibake). Errors are replaced rather than crashing so
+    the dashboard never dies on a stray character.
+    """
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError):
+                pass
+
+
 def _check_dependency(module_name: str, extra: str = "cli") -> bool:
     try:
         __import__(module_name)
@@ -343,8 +361,73 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _run_maintenance_commands(args: argparse.Namespace, console: Any) -> int:
+    """Handle one-off device maintenance commands (flash check, time sync, etc.)."""
+    connector = NuanicConnector(
+        target_address=args.ring_addr, auto_sync_time=not args.sync_time
+    )
+    if not await connector.connect():
+        console.print("[red][FAIL] Could not connect to ring[/red]")
+        return 1
+    try:
+        if args.sync_time:
+            res = await connector.sync_time()
+            console.print(
+                "[green][SUCCESS] Time synchronized:[/green] True"
+                if res
+                else "[red][FAIL] Time sync failed[/red]"
+            )
+        if args.reset_algo:
+            res = await connector.send_command("ra")
+            console.print(
+                "[green][SUCCESS] DNE Algorithm reset:[/green] True"
+                if res
+                else "[red][FAIL] Reset algo failed[/red]"
+            )
+        if args.shipping_mode:
+            res = await connector.send_command("sm")
+            console.print(
+                "[green][SUCCESS] Sent shipping mode command:[/green] True"
+                if res
+                else "[red][FAIL] Shipping mode failed[/red]"
+            )
+        if args.check_flash:
+            usage = await connector.read_storage_usage()
+            fmt = await connector.read_storage_format()
+            if usage:
+                console.print("\n[bold cyan]OFFLINE FLASH MEMORY STATUS:[/bold cyan]")
+                console.print(f"  Total Size     : {usage['size_bytes']} bytes")
+                console.print(
+                    f"  Used Space     : {usage['used_bytes']} bytes ({usage['percent_used']:.1f}%)"
+                )
+                console.print(f"  Available      : {usage['available_bytes']} bytes")
+                fmt_str = (
+                    "Standby/None"
+                    if fmt == 0
+                    else ("Raw EDA (14B)" if fmt == 1 else "Nuanic Algorithm DNE (22B)")
+                )
+                console.print(f"  Storage Format : {fmt} ({fmt_str})\n")
+            else:
+                console.print("[red][FAIL] Could not read storage usage[/red]")
+        if args.download_storage:
+            console.print(
+                "[cyan]Downloading offline session records from flash memory...[/cyan]"
+            )
+            records = await connector.download_storage()
+            console.print(
+                f"[green]Downloaded {len(records)} record(s) from flash storage.[/green]"
+            )
+            if records:
+                console.print(f"Sample first record: {records[0]}")
+                console.print(f"Sample last record : {records[-1]}")
+    finally:
+        await connector.disconnect()
+    return 0
+
+
 def ring_monitor() -> int:
     """Entry point for nuanic-ring-monitor command."""
+    _configure_windows_console()
     if not _check_dependency("rich"):
         return 1
     parser = build_parser()
@@ -422,74 +505,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         or args.shipping_mode
         or args.download_storage
     ):
-        connector = NuanicConnector(
-            target_address=args.ring_addr, auto_sync_time=not args.sync_time
-        )
-        if not await connector.connect():
-            console.print("[red][FAIL] Could not connect to ring[/red]")
-            return 1
-        try:
-            if args.sync_time:
-                res = await connector.sync_time()
-                console.print(
-                    "[green][SUCCESS] Time synchronized:[/green] True"
-                    if res
-                    else "[red][FAIL] Time sync failed[/red]"
-                )
-            if args.reset_algo:
-                res = await connector.send_command("ra")
-                console.print(
-                    "[green][SUCCESS] DNE Algorithm reset:[/green] True"
-                    if res
-                    else "[red][FAIL] Reset algo failed[/red]"
-                )
-            if args.shipping_mode:
-                res = await connector.send_command("sm")
-                console.print(
-                    "[green][SUCCESS] Sent shipping mode command:[/green] True"
-                    if res
-                    else "[red][FAIL] Shipping mode failed[/red]"
-                )
-            if args.check_flash:
-                usage = await connector.read_storage_usage()
-                fmt = await connector.read_storage_format()
-                if usage:
-                    console.print(
-                        "\n[bold cyan]OFFLINE FLASH MEMORY STATUS:[/bold cyan]"
-                    )
-                    console.print(f"  Total Size     : {usage['size_bytes']} bytes")
-                    console.print(
-                        f"  Used Space     : {usage['used_bytes']} bytes ({usage['percent_used']:.1f}%)"
-                    )
-                    console.print(
-                        f"  Available      : {usage['available_bytes']} bytes"
-                    )
-                    fmt_str = (
-                        "Standby/None"
-                        if fmt == 0
-                        else (
-                            "Raw EDA (14B)"
-                            if fmt == 1
-                            else "Nuanic Algorithm DNE (22B)"
-                        )
-                    )
-                    console.print(f"  Storage Format : {fmt} ({fmt_str})\n")
-                else:
-                    console.print("[red][FAIL] Could not read storage usage[/red]")
-            if args.download_storage:
-                console.print(
-                    "[cyan]Downloading offline session records from flash memory...[/cyan]"
-                )
-                records = await connector.download_storage()
-                console.print(
-                    f"[green]Downloaded {len(records)} record(s) from flash storage.[/green]"
-                )
-                if records:
-                    console.print(f"Sample first record: {records[0]}")
-                    console.print(f"Sample last record : {records[-1]}")
-        finally:
-            await connector.disconnect()
-        return 0
+        return await _run_maintenance_commands(args, console)
 
     if args.nuanic_export:
         args.csv_layout = "nuanic"
@@ -604,3 +620,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         await monitor.stop_multi()
 
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(ring_monitor())

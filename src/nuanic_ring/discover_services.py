@@ -616,14 +616,26 @@ async def run_diagnostics(
             )
 
     if buffer_poll > 0:
-        if target_chars:
-            await inspect_buffer(client, polls=buffer_poll, interval=buffer_interval)
-        else:
-            print(
-                f"[SKIP] Buffer inspection skipped because target service {SERVICE_UUID} is missing"
-            )
+        await _inspect_buffer_if_available(
+            client, target_chars, buffer_poll, buffer_interval
+        )
 
     return 0
+
+
+async def _inspect_buffer_if_available(
+    client,
+    target_chars,
+    buffer_poll: int,
+    buffer_interval: float,
+) -> None:
+    """Inspect the ring buffer, skipping cleanly when the target service is absent."""
+    if target_chars:
+        await inspect_buffer(client, polls=buffer_poll, interval=buffer_interval)
+    else:
+        print(
+            f"[SKIP] Buffer inspection skipped because target service {SERVICE_UUID} is missing"
+        )
 
 
 async def main() -> int:
@@ -671,9 +683,14 @@ async def main() -> int:
         await connector.disconnect()
 
 
-if __name__ == "__main__":
+def main_sync() -> int:
+    """Console-script entry point: run the async diagnostics main under asyncio."""
     try:
-        raise SystemExit(asyncio.run(main()))
+        return asyncio.run(main())
     except KeyboardInterrupt:
         print("\n[STOP] Interrupted by user")
-        raise SystemExit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main_sync())
