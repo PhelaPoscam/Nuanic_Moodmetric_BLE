@@ -964,6 +964,38 @@ class NuanicConnector:
             _log.debug("read_storage_format: %s", exc)
             return None
 
+    def _parse_storage_record(
+        self, record_data: bytes, format_type: int
+    ) -> Optional[Dict[str, Any]]:
+        """Parse one fixed-size record from the offline flash buffer."""
+        if format_type == 1:
+            boot_count, timestamp_ms, eda_ohm = struct.unpack(
+                "<HQI", record_data
+            )
+            return {
+                "format": "EDA",
+                "boot_count": boot_count,
+                "timestamp_ms": timestamp_ms,
+                "eda_ohm": eda_ohm,
+                "resistance_kohm": eda_ohm / 1000.0,
+                "conductance_us": (
+                    (1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0
+                ),
+            }
+        if format_type == 2:
+            boot_count, timestamp_ms, srrn, srl, dne = struct.unpack(
+                "<HQiii", record_data
+            )
+            return {
+                "format": "DNE",
+                "boot_count": boot_count,
+                "timestamp_ms": timestamp_ms,
+                "srrn": srrn,
+                "srl": srl,
+                "dne": dne,
+            }
+        return None
+
     async def download_storage(
         self,
         format_type: Optional[int] = None,
@@ -988,37 +1020,9 @@ class NuanicConnector:
             while len(buffer_bytes) >= item_size:
                 record_data = bytes(buffer_bytes[:item_size])
                 del buffer_bytes[:item_size]
-
-                if format_type == 1:
-                    boot_count, timestamp_ms, eda_ohm = struct.unpack(
-                        "<HQI", record_data
-                    )
-                    records.append(
-                        {
-                            "format": "EDA",
-                            "boot_count": boot_count,
-                            "timestamp_ms": timestamp_ms,
-                            "eda_ohm": eda_ohm,
-                            "resistance_kohm": eda_ohm / 1000.0,
-                            "conductance_us": (
-                                (1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0
-                            ),
-                        }
-                    )
-                elif format_type == 2:
-                    boot_count, timestamp_ms, srrn, srl, dne = struct.unpack(
-                        "<HQiii", record_data
-                    )
-                    records.append(
-                        {
-                            "format": "DNE",
-                            "boot_count": boot_count,
-                            "timestamp_ms": timestamp_ms,
-                            "srrn": srrn,
-                            "srl": srl,
-                            "dne": dne,
-                        }
-                    )
+                parsed = self._parse_storage_record(record_data, format_type)
+                if parsed:
+                    records.append(parsed)
             await asyncio.sleep(0.05)
 
         return records

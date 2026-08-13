@@ -435,6 +435,29 @@ def parse_live_eda(sender, data: bytearray):
     )
 
 
+def _print_stream_summary(
+    notify_uuids: list, stream_stats: Dict[str, NotifyStats]
+) -> None:
+    """Print per-UUID packet counts, rates, and size distributions."""
+    print_header("CORE STREAM SUMMARY")
+    silent_uuids: list[str] = []
+    for uuid in notify_uuids:
+        key = uuid.lower()
+        stats = stream_stats[key]
+        if stats.count == 0:
+            silent_uuids.append(uuid)
+        print(f"[SUMMARY] {uuid}")
+        print(f"  packets: {stats.count}")
+        print(f"  rate: {stats.freq_hz():.2f} Hz")
+        print(
+            f"  sizes: {dict(sorted(stats.size_dist.items())) if stats.size_dist else {}}"
+        )
+    if silent_uuids:
+        print("[WARN] Silent UUIDs in this run:")
+        for uuid in silent_uuids:
+            print(f"  - {uuid}")
+
+
 async def subscribe_core_streams(
     client,
     listen_seconds: int | None = None,
@@ -538,24 +561,7 @@ async def subscribe_core_streams(
             except Exception:
                 pass
 
-        print_header("CORE STREAM SUMMARY")
-        silent_uuids: list[str] = []
-        for uuid in notify_uuids:
-            key = uuid.lower()
-            stats = stream_stats[key]
-            if stats.count == 0:
-                silent_uuids.append(uuid)
-            print(f"[SUMMARY] {uuid}")
-            print(f"  packets: {stats.count}")
-            print(f"  rate: {stats.freq_hz():.2f} Hz")
-            print(
-                f"  sizes: {dict(sorted(stats.size_dist.items())) if stats.size_dist else {}}"
-            )
-
-        if silent_uuids:
-            print("[WARN] Silent UUIDs in this run:")
-            for uuid in silent_uuids:
-                print(f"  - {uuid}")
+        _print_stream_summary(notify_uuids, stream_stats)
 
 
 async def run_diagnostics(

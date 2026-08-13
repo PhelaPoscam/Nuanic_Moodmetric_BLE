@@ -361,6 +361,62 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _execute_maintenance(
+    args: argparse.Namespace, connector: NuanicConnector, console: Any
+) -> None:
+    """Execute one-off maintenance commands against a connected ring."""
+    if args.sync_time:
+        res = await connector.sync_time()
+        console.print(
+            "[green][SUCCESS] Time synchronized:[/green] True"
+            if res
+            else "[red][FAIL] Time sync failed[/red]"
+        )
+    if args.reset_algo:
+        res = await connector.send_command("ra")
+        console.print(
+            "[green][SUCCESS] DNE Algorithm reset:[/green] True"
+            if res
+            else "[red][FAIL] Reset algo failed[/red]"
+        )
+    if args.shipping_mode:
+        res = await connector.send_command("sm")
+        console.print(
+            "[green][SUCCESS] Sent shipping mode command:[/green] True"
+            if res
+            else "[red][FAIL] Shipping mode failed[/red]"
+        )
+    if args.check_flash:
+        usage = await connector.read_storage_usage()
+        fmt = await connector.read_storage_format()
+        if usage:
+            console.print("\n[bold cyan]OFFLINE FLASH MEMORY STATUS:[/bold cyan]")
+            console.print(f"  Total Size     : {usage['size_bytes']} bytes")
+            console.print(
+                f"  Used Space     : {usage['used_bytes']} bytes ({usage['percent_used']:.1f}%)"
+            )
+            console.print(f"  Available      : {usage['available_bytes']} bytes")
+            fmt_str = (
+                "Standby/None"
+                if fmt == 0
+                else ("Raw EDA (14B)" if fmt == 1 else "Nuanic Algorithm DNE (22B)")
+            )
+            console.print(f"  Storage Format : {fmt} ({fmt_str})\n")
+        else:
+            console.print("[red][FAIL] Could not read storage usage[/red]")
+    if args.download_storage:
+        console.print(
+            "[cyan]Downloading offline session records from flash memory...[/cyan]"
+        )
+        records = await connector.download_storage()
+        console.print(
+            f"[green]Downloaded {len(records)} record(s) from flash storage.[/green]"
+        )
+        if records:
+            console.print(f"Sample first record: {records[0]}")
+            console.print(f"Sample last record : {records[-1]}")
+
+
 async def _run_maintenance_commands(args: argparse.Namespace, console: Any) -> int:
     """Handle one-off device maintenance commands (flash check, time sync, etc.)."""
     connector = NuanicConnector(
@@ -370,56 +426,7 @@ async def _run_maintenance_commands(args: argparse.Namespace, console: Any) -> i
         console.print("[red][FAIL] Could not connect to ring[/red]")
         return 1
     try:
-        if args.sync_time:
-            res = await connector.sync_time()
-            console.print(
-                "[green][SUCCESS] Time synchronized:[/green] True"
-                if res
-                else "[red][FAIL] Time sync failed[/red]"
-            )
-        if args.reset_algo:
-            res = await connector.send_command("ra")
-            console.print(
-                "[green][SUCCESS] DNE Algorithm reset:[/green] True"
-                if res
-                else "[red][FAIL] Reset algo failed[/red]"
-            )
-        if args.shipping_mode:
-            res = await connector.send_command("sm")
-            console.print(
-                "[green][SUCCESS] Sent shipping mode command:[/green] True"
-                if res
-                else "[red][FAIL] Shipping mode failed[/red]"
-            )
-        if args.check_flash:
-            usage = await connector.read_storage_usage()
-            fmt = await connector.read_storage_format()
-            if usage:
-                console.print("\n[bold cyan]OFFLINE FLASH MEMORY STATUS:[/bold cyan]")
-                console.print(f"  Total Size     : {usage['size_bytes']} bytes")
-                console.print(
-                    f"  Used Space     : {usage['used_bytes']} bytes ({usage['percent_used']:.1f}%)"
-                )
-                console.print(f"  Available      : {usage['available_bytes']} bytes")
-                fmt_str = (
-                    "Standby/None"
-                    if fmt == 0
-                    else ("Raw EDA (14B)" if fmt == 1 else "Nuanic Algorithm DNE (22B)")
-                )
-                console.print(f"  Storage Format : {fmt} ({fmt_str})\n")
-            else:
-                console.print("[red][FAIL] Could not read storage usage[/red]")
-        if args.download_storage:
-            console.print(
-                "[cyan]Downloading offline session records from flash memory...[/cyan]"
-            )
-            records = await connector.download_storage()
-            console.print(
-                f"[green]Downloaded {len(records)} record(s) from flash storage.[/green]"
-            )
-            if records:
-                console.print(f"Sample first record: {records[0]}")
-                console.print(f"Sample last record : {records[-1]}")
+        await _execute_maintenance(args, connector, console)
     finally:
         await connector.disconnect()
     return 0
@@ -458,6 +465,22 @@ def ring_monitor() -> int:
         return 0
 
 
+def _cap_multi_ring_hz(console: Any, args: argparse.Namespace) -> None:
+    """Warn or cap target_hz for multi-ring sessions (hardware unstable above ~16 Hz)."""
+    is_multi = args.monitor_all or len(_parse_ring_addresses(args.ring_addr, args.ring_addrs)) > 1
+    if not is_multi or not args.target_hz or args.target_hz <= 16:
+        return
+    if args.force_hz:
+        console.print(
+            f"\n[bold red]DANGER: HIGH FREQUENCY SESSION FORCED ({args.target_hz} Hz)[/bold red]\n"
+        )
+    else:
+        console.print(
+            f"\n[bold yellow]STABILITY WARNING:[/bold yellow] Capping {args.target_hz} Hz -> 16 Hz.\n"
+        )
+        args.target_hz = 16
+
+
 async def _run_monitor_cli(args: argparse.Namespace) -> int:
     from rich.console import Console
     from rich.live import Live
@@ -470,18 +493,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         box_style = box.ASCII
 
     target_addresses = _parse_ring_addresses(args.ring_addr, args.ring_addrs)
-    is_multi = args.monitor_all or len(target_addresses) > 1
-
-    if is_multi and args.target_hz and args.target_hz > 16:
-        if args.force_hz:
-            console.print(
-                f"\n[bold red]DANGER: HIGH FREQUENCY SESSION FORCED ({args.target_hz} Hz)[/bold red]\n"
-            )
-        else:
-            console.print(
-                f"\n[bold yellow]STABILITY WARNING:[/bold yellow] Capping {args.target_hz} Hz -> 16 Hz.\n"
-            )
-            args.target_hz = 16
+    _cap_multi_ring_hz(console, args)
 
     if args.discover:
         connector = NuanicConnector(target_address=args.ring_addr)

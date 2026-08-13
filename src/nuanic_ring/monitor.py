@@ -12,7 +12,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from .connector import NuanicConnector
 from .signal_processing import SignalConditioner
@@ -393,6 +393,9 @@ class NuanicMonitor:
             and (state.stream_writer_task and state.computed_writer_task)
         ):
             return
+        self._initialize_split_log_files_helper(state)
+
+    def _initialize_split_log_files_helper(self, state: RingDeviceState) -> None:
         stream_header = [
             "timestamp",
             "elapsed_ms",
@@ -513,53 +516,51 @@ class NuanicMonitor:
                 _log.debug("CSV write error for %s", log_file, exc_info=True)
             batch.clear()
 
-    def _enqueue_log(self, state: RingDeviceState, row: List[Any]) -> None:
-        if not self.enable_logging or not state.log_queue:
+    def _enqueue_to(
+        self,
+        state: RingDeviceState,
+        queue: Optional[asyncio.Queue[List[Any]]],
+        row: List[Any],
+        file_ready: bool,
+        initializer: Callable[[RingDeviceState], None],
+    ) -> None:
+        """Guard, lazy-init, and enqueue a CSV row; count drops on full queue."""
+        if not self.enable_logging or not queue:
             return
-
-        if not state.log_file:
-            self._initialize_log_file(state)
-
+        if not file_ready:
+            initializer(state)
         try:
-            state.log_queue.put_nowait(row)
+            queue.put_nowait(row)
         except asyncio.QueueFull:
             state.dropped_rows += 1
+
+    def _enqueue_log(self, state: RingDeviceState, row: List[Any]) -> None:
+        self._enqueue_to(
+            state, state.log_queue, row,
+            file_ready=bool(state.log_file),
+            initializer=self._initialize_log_file,
+        )
 
     def _enqueue_stream_log(self, state: RingDeviceState, row: List[Any]) -> None:
-        if not self.enable_logging or not state.stream_log_queue:
-            return
-
-        if not state.stream_log_file or not state.computed_log_file:
-            self._initialize_split_log_files(state)
-
-        try:
-            state.stream_log_queue.put_nowait(row)
-        except asyncio.QueueFull:
-            state.dropped_rows += 1
+        self._enqueue_to(
+            state, state.stream_log_queue, row,
+            file_ready=bool(state.stream_log_file and state.computed_log_file),
+            initializer=self._initialize_split_log_files,
+        )
 
     def _enqueue_computed_log(self, state: RingDeviceState, row: List[Any]) -> None:
-        if not self.enable_logging or not state.computed_log_queue:
-            return
-
-        if not state.stream_log_file or not state.computed_log_file:
-            self._initialize_split_log_files(state)
-
-        try:
-            state.computed_log_queue.put_nowait(row)
-        except asyncio.QueueFull:
-            state.dropped_rows += 1
+        self._enqueue_to(
+            state, state.computed_log_queue, row,
+            file_ready=bool(state.stream_log_file and state.computed_log_file),
+            initializer=self._initialize_split_log_files,
+        )
 
     def _enqueue_imu_log(self, state: RingDeviceState, row: List[Any]) -> None:
-        if not self.enable_logging or not state.imu_log_queue:
-            return
-
-        if not state.imu_log_file:
-            self._initialize_imu_log_file(state)
-
-        try:
-            state.imu_log_queue.put_nowait(row)
-        except asyncio.QueueFull:
-            state.dropped_rows += 1
+        self._enqueue_to(
+            state, state.imu_log_queue, row,
+            file_ready=bool(state.imu_log_file),
+            initializer=self._initialize_imu_log_file,
+        )
 
     def _base_row(
         self,
@@ -1338,6 +1339,15 @@ class NuanicMonitor:
         if max_devices is not None:
             targets = targets[: max(0, max_devices)]
 
+        return await self._connect_targets(targets, discovered_by_mac, stagger_delay)
+
+    async def _connect_targets(
+        self,
+        targets: List[str],
+        discovered_by_mac: Dict[str, Any],
+        stagger_delay: float,
+    ) -> bool:
+        """Connect to each target with stagger; return True if any connected."""
         connected_any = False
         for idx, mac in enumerate(targets):
             entry = discovered_by_mac.get(mac)
