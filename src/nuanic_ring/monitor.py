@@ -294,7 +294,14 @@ class NuanicMonitor:
                 state.stream_log_queue = asyncio.Queue(maxsize=5000)
                 state.computed_log_queue = asyncio.Queue(maxsize=5000)
             state.imu_log_queue = asyncio.Queue(maxsize=5000)
-            # writer_task will be created lazily in _initialize_log_file
+            # Eagerly create log files and writer tasks here so the BLE notify
+            # callback hot path never performs blocking filesystem I/O (open/mkdir).
+            # Only when a session is running: the writer loop exits immediately
+            # if `running` is False, so we must not start it pre-session.
+            if self.running:
+                self._initialize_log_file(state)
+                self._initialize_split_log_files(state)
+                self._initialize_imu_log_file(state)
 
         return state
 
@@ -329,12 +336,21 @@ class NuanicMonitor:
 
     def _start_writer(
         self, state: RingDeviceState, queue: asyncio.Queue[List[Any]], file_path: Path
-    ) -> asyncio.Task[None]:
-        return asyncio.create_task(self._csv_writer_loop(state, queue, file_path))
+    ) -> Optional[asyncio.Task[None]]:
+        writer = self._csv_writer_loop(state, queue, file_path)
+        try:
+            return asyncio.create_task(writer)
+        except RuntimeError:
+            # No running event loop (e.g. sync callers). The writer loop will be
+            # started by a later async call into _initialize_*.
+            writer.close()
+            return None
 
     def _initialize_log_file(self, state: RingDeviceState) -> None:
-        """Lazily initialize the CSV log file only when data starts arriving."""
-        if state.log_file or not state.log_queue:
+        """Initialize the CSV log file and its writer task (eagerly on state creation)."""
+        if not state.log_queue:
+            return
+        if state.log_file and state.writer_task:
             return
         if self.csv_layout == "nuanic":
             header = ["address", "time_unix", "time", "dne", "srl", "srrn", "eda"]
@@ -360,15 +376,22 @@ class NuanicMonitor:
                 "Equalize_Mode",
                 "Equalize_WouldDrop",
             ]
-        state.log_file = self._open_log_file(state, "", header)
+        if not state.log_file:
+            state.log_file = self._open_log_file(state, "", header)
         if state.log_file and state.log_queue:
             state.writer_task = self._start_writer(
                 state, state.log_queue, state.log_file
             )
 
     def _initialize_split_log_files(self, state: RingDeviceState) -> None:
-        """Lazily initialize raw-stream and computed CSV files."""
-        if state.stream_log_file or not state.stream_log_queue:
+        """Initialize raw-stream and computed CSV files and their writer tasks."""
+        if not state.stream_log_queue or not state.computed_log_queue:
+            return
+        if (
+            state.stream_log_file
+            and state.computed_log_file
+            and (state.stream_writer_task and state.computed_writer_task)
+        ):
             return
         stream_header = [
             "timestamp",
@@ -411,22 +434,28 @@ class NuanicMonitor:
             "marker_label",
             "marker_source",
         ]
-        state.stream_log_file = self._open_log_file(state, "streamed", stream_header)
+        if not state.stream_log_file:
+            state.stream_log_file = self._open_log_file(
+                state, "streamed", stream_header
+            )
         if state.stream_log_file and state.stream_log_queue:
             state.stream_writer_task = self._start_writer(
                 state, state.stream_log_queue, state.stream_log_file
             )
-        state.computed_log_file = self._open_log_file(
-            state, "computed", computed_header
-        )
+        if not state.computed_log_file:
+            state.computed_log_file = self._open_log_file(
+                state, "computed", computed_header
+            )
         if state.computed_log_file and state.computed_log_queue:
             state.computed_writer_task = self._start_writer(
                 state, state.computed_log_queue, state.computed_log_file
             )
 
     def _initialize_imu_log_file(self, state: RingDeviceState) -> None:
-        """Lazily initialize the dedicated IMU CSV file."""
-        if state.imu_log_file or not state.imu_log_queue:
+        """Initialize the dedicated IMU CSV file and its writer task."""
+        if not state.imu_log_queue:
+            return
+        if state.imu_log_file and state.imu_writer_task:
             return
         header = [
             "timestamp",
@@ -439,7 +468,8 @@ class NuanicMonitor:
             "z",
             "marker",
         ]
-        state.imu_log_file = self._open_log_file(state, "imu", header)
+        if not state.imu_log_file:
+            state.imu_log_file = self._open_log_file(state, "imu", header)
         if state.imu_log_file and state.imu_log_queue:
             state.imu_writer_task = self._start_writer(
                 state, state.imu_log_queue, state.imu_log_file
@@ -1111,6 +1141,30 @@ class NuanicMonitor:
         await self.connector.unsubscribe_from_raw_eda(address=mac)
         await self.connector.unsubscribe_from_live_eda(address=mac)
 
+    async def _warmup_sequence(self, mac: str, device: Any = None) -> None:
+        """Optional firmware warmup: prime the ring at the target rate, then release."""
+        if not (self.target_hz and self.attempt_ring_rate_control and self.use_warmup):
+            return
+        _log.info(
+            f"[WARMUP] Priming firmware for Rate Control ({self.target_hz}Hz) on {mac}..."
+        )
+        warm_ok = await self.connector.connect_device(address=mac, device=device)
+        if warm_ok:
+            # Set the rate to kick the ring into gear, then disconnect
+            await self.connector.attempt_set_sample_rate(
+                target_hz=int(self.target_hz),
+                address=mac,
+            )
+            _log.info(
+                f"[WARMUP] Releasing {mac} to complete prime sequence... (delay: {self.warmup_delay}s)"
+            )
+            await self.connector.disconnect(address=mac)
+            await asyncio.sleep(self.warmup_delay)
+        else:
+            _log.info(
+                f"[WARMUP] Failed initial prime connect for {mac}. Trying normal path."
+            )
+
     async def _connect_and_subscribe(
         self,
         mac: str,
@@ -1119,27 +1173,7 @@ class NuanicMonitor:
         state = self._ensure_device_state(mac)
         state.status = "connecting"
 
-        # Optional Theory of Two: Firmware Warmup Sequence
-        if self.target_hz and self.attempt_ring_rate_control and self.use_warmup:
-            _log.info(
-                f"[WARMUP] Priming firmware for Rate Control ({self.target_hz}Hz) on {mac}..."
-            )
-            warm_ok = await self.connector.connect_device(address=mac, device=device)
-            if warm_ok:
-                # Set the rate to kick the ring into gear, then disconnect
-                await self.connector.attempt_set_sample_rate(
-                    target_hz=int(self.target_hz),
-                    address=mac,
-                )
-                _log.info(
-                    f"[WARMUP] Releasing {mac} to complete prime sequence... (delay: {self.warmup_delay}s)"
-                )
-                await self.connector.disconnect(address=mac)
-                await asyncio.sleep(self.warmup_delay)
-            else:
-                _log.info(
-                    f"[WARMUP] Failed initial prime connect for {mac}. Trying normal path."
-                )
+        await self._warmup_sequence(mac, device)
 
         ok = await self.connector.connect_device(address=mac, device=device)
 
@@ -1209,6 +1243,114 @@ class NuanicMonitor:
             )
             await self.connector.set_mode(self.initial_mode, address=mac)
 
+    def _apply_multi_ring_hz_cap(self, is_multi: bool) -> None:
+        """Hardware safety cap: multi-ring sessions are unstable above ~16 Hz."""
+        if not is_multi or not self.target_hz or self.target_hz <= 16:
+            return
+        if self.force_hz:
+            _log.info(
+                f"[DANGER] Multi-ring Hz safety cap bypassed "
+                f"via force: {self.target_hz} Hz"
+            )
+        else:
+            _log.info(
+                f"[WARN] Multi-ring sessions are unstable above ~16 Hz due to hardware limitations. "
+                f"Capping {self.target_hz} Hz -> 16.0 Hz."
+            )
+            self.target_hz = 16.0
+
+    async def _start_single_ring(self) -> bool:
+        """Backward-compatible single-ring selection flow."""
+        if not await self.connector.connect():
+            self.running = False
+            return False
+        client = self.connector.client
+        if not client:
+            self.running = False
+            return False
+        mac = client.address
+        state = self._ensure_device_state(mac)
+        state.status = "connected"
+        state.battery = await self.connector.read_battery()
+        await self._post_connect_setup(mac, state)
+        ok = await self._subscribe_device_streams(mac)
+        if not ok:
+            state.status = "degraded"
+        return True
+
+    async def _discover_targets(
+        self,
+        scan_timeout: Optional[float],
+        scan_attempts: Optional[int],
+    ) -> Dict[str, Any]:
+        """Discover matching rings, retrying once after a BT radio reset on Windows."""
+        s_timeout = scan_timeout if scan_timeout is not None else 6.0
+        s_attempts = scan_attempts if scan_attempts is not None else 3
+
+        discovered: List[Dict[str, Any]] = (
+            await self.connector.discover_all_matching_rings(
+                include_device=True,
+                scan_timeout=s_timeout,
+                attempts=s_attempts,
+                retry_delay=0.5,
+                stop_if_found=True,
+            )
+        )
+
+        if not discovered and platform.system() == "Windows" and self.allow_reset_bt:
+            _log.info(
+                "[BT-RESET] No rings discovered and allow_reset_bt is enabled. "
+                "Resetting Bluetooth adapter to clear stale connections..."
+            )
+            reset_ok = await self.connector._reset_bluetooth_radio()
+            if reset_ok:
+                _log.info("[BT-RESET] Rescanning after adapter reset...")
+                discovered = await self.connector.discover_all_matching_rings(
+                    include_device=True,
+                    scan_timeout=s_timeout,
+                    attempts=s_attempts,
+                    retry_delay=0.5,
+                    stop_if_found=True,
+                )
+
+        return {d["address"].upper(): d for d in discovered}
+
+    async def _start_multi_devices(
+        self,
+        ring_addresses: Optional[List[str]],
+        monitor_all: bool,
+        max_devices: Optional[int],
+        stagger_delay: float,
+        scan_timeout: Optional[float],
+        scan_attempts: Optional[int],
+    ) -> bool:
+        """Connect to multiple rings: discover when needed, then connect with stagger."""
+        targets = [a.upper() for a in (ring_addresses or [])]
+        discovered_by_mac: Dict[str, Any] = {}
+
+        if monitor_all or not targets:
+            discovered_by_mac = await self._discover_targets(
+                scan_timeout, scan_attempts
+            )
+            if not targets:
+                targets = list(discovered_by_mac.keys())
+
+        if max_devices is not None:
+            targets = targets[: max(0, max_devices)]
+
+        connected_any = False
+        for idx, mac in enumerate(targets):
+            entry = discovered_by_mac.get(mac)
+            ok = await self._connect_and_subscribe(
+                mac=mac,
+                device=(entry or {}).get("device"),
+            )
+            connected_any = connected_any or ok
+            if idx < len(targets) - 1 and stagger_delay > 0:
+                await asyncio.sleep(stagger_delay)
+
+        return connected_any
+
     async def start_multi(
         self,
         ring_addresses: Optional[List[str]] = None,
@@ -1231,107 +1373,30 @@ class NuanicMonitor:
         self.capture_armed = False
         self._auto_reconnect = auto_reconnect
 
-        # Hardware safety cap for multi-device sessions
-        targets_count = len(ring_addresses or [])
-        if monitor_all or targets_count > 1:
-            if self.target_hz and self.target_hz > 16:
-                if self.force_hz:
-                    _log.info(
-                        f"[DANGER] Multi-ring Hz safety cap bypassed "
-                        f"via force: {self.target_hz} Hz"
-                    )
-                else:
-                    _log.info(
-                        f"[WARN] Multi-ring sessions are unstable above ~16 Hz due to hardware limitations. "
-                        f"Capping {self.target_hz} Hz -> 16.0 Hz."
-                    )
-                    self.target_hz = 16.0
+        is_multi = monitor_all or len(ring_addresses or []) > 1
+        self._apply_multi_ring_hz_cap(is_multi)
 
         if not ring_addresses and not monitor_all:
-            # Backward-compatible single selection flow.
-            if not await self.connector.connect():
-                self.running = False
-                return False
-            client = self.connector.client
-            if not client:
-                self.running = False
-                return False
-            mac = client.address
-            state = self._ensure_device_state(mac)
-            state.status = "connected"
-            state.battery = await self.connector.read_battery()
-            await self._post_connect_setup(mac, state)
-            ok = await self._subscribe_device_streams(mac)
-            if not ok:
-                state.status = "degraded"
-
-            self.start_time = datetime.now()
-            self.capture_armed = True
-
-            self._health_task = asyncio.create_task(self._connection_health_loop())
-            return True
-
-        # Multi-device path.
-        targets = [a.upper() for a in (ring_addresses or [])]
-        discovered_by_mac = {}
-
-        if monitor_all or not targets:
-            # Use SDK defaults if not specified
-            s_timeout = scan_timeout if scan_timeout is not None else 6.0
-            s_attempts = scan_attempts if scan_attempts is not None else 3
-
-            discovered: List[Dict[str, Any]] = (
-                await self.connector.discover_all_matching_rings(
-                    include_device=True,
-                    scan_timeout=s_timeout,
-                    attempts=s_attempts,
-                    retry_delay=0.5,
-                    stop_if_found=True,
-                )
+            started = await self._start_single_ring()
+        else:
+            started = await self._start_multi_devices(
+                ring_addresses=ring_addresses,
+                monitor_all=monitor_all,
+                max_devices=max_devices,
+                stagger_delay=stagger_delay,
+                scan_timeout=scan_timeout,
+                scan_attempts=scan_attempts,
             )
 
-            if (
-                not discovered
-                and platform.system() == "Windows"
-                and self.allow_reset_bt
-            ):
-                _log.info(
-                    "[BT-RESET] No rings discovered and allow_reset_bt is enabled. "
-                    "Resetting Bluetooth adapter to clear stale connections..."
-                )
-                reset_ok = await self.connector._reset_bluetooth_radio()
-                if reset_ok:
-                    _log.info("[BT-RESET] Rescanning after adapter reset...")
-                    discovered = await self.connector.discover_all_matching_rings(
-                        include_device=True,
-                        scan_timeout=s_timeout,
-                        attempts=s_attempts,
-                        retry_delay=0.5,
-                        stop_if_found=True,
-                    )
-
-            discovered_by_mac = {d["address"].upper(): d for d in discovered}
-            if not targets:
-                targets = list(discovered_by_mac.keys())
-
-        if max_devices is not None:
-            targets = targets[: max(0, max_devices)]
-
-        connected_any = False
-        for idx, mac in enumerate(targets):
-            entry = discovered_by_mac.get(mac)
-            ok = await self._connect_and_subscribe(
-                mac=mac,
-                device=(entry or {}).get("device"),
-            )
-            connected_any = connected_any or ok
-            if idx < len(targets) - 1 and stagger_delay > 0:
-                await asyncio.sleep(stagger_delay)
+        if not started:
+            self.running = False
+            return False
 
         self.start_time = datetime.now()
         self.capture_armed = True
+
         self._health_task = asyncio.create_task(self._connection_health_loop())
-        return connected_any
+        return True
 
     async def _connection_health_loop(self) -> None:
         while self.running:
@@ -1386,7 +1451,10 @@ class NuanicMonitor:
 
         await self.connector.disconnect()
 
-        # Surface dropped-row warnings at session end
+        await self._drain_writers_and_report()
+
+    async def _drain_writers_and_report(self) -> None:
+        """Drain all writer tasks and surface dropped-row warnings at session end."""
         for state in self.device_states.values():
             for task in (
                 state.writer_task,

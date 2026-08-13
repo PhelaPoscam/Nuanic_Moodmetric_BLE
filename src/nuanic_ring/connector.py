@@ -303,16 +303,7 @@ class NuanicConnector:
                     if event:
                         event.clear()
 
-                for char_uuid in [
-                    self.LIVE_DNE_UUID,
-                    self.IMU_BATCH_UUID,
-                    self.STATE_UUID,
-                    self.LIVE_EDA_UUID,
-                ]:
-                    try:
-                        await target_client.stop_notify(char_uuid)
-                    except Exception:
-                        pass
+                await self._stop_all_notifications(target_client)
 
                 print(
                     f"[CLEANUP] Disconnecting BleakClient{' for ' + address if address else ''}..."
@@ -334,31 +325,49 @@ class NuanicConnector:
         except Exception as e:
             print(f"[CLEANUP] Error during disconnect: {e}")
         finally:
-            if platform.system() == "Windows":
-                try:
-                    if hasattr(target_client, "_backend"):
-                        if (
-                            hasattr(target_client._backend, "_session")
-                            and target_client._backend._session
-                        ):
-                            target_client._backend._session.close()
-                        if (
-                            hasattr(target_client._backend, "_device")
-                            and target_client._backend._device
-                        ):
-                            target_client._backend._device.close()
-                except Exception:
-                    pass
+            await self._teardown_client_backend(target_client, address)
 
+    async def _stop_all_notifications(self, target_client: BleakClient) -> None:
+        """Best-effort stop of all notification streams on a client."""
+        for char_uuid in [
+            self.LIVE_DNE_UUID,
+            self.IMU_BATCH_UUID,
+            self.STATE_UUID,
+            self.LIVE_EDA_UUID,
+        ]:
             try:
-                target_client.set_disconnected_callback(None)  # type: ignore[attr-defined]
+                await target_client.stop_notify(char_uuid)
             except Exception:
                 pass
 
-            if not address:
-                self.client = None
-            else:
-                self.clients.pop(address.upper(), None)
+    async def _teardown_client_backend(
+        self, target_client: BleakClient, address: Optional[str] = None
+    ) -> None:
+        """Release OS-level BLE backend resources and drop the client registry entry."""
+        try:
+            if hasattr(target_client, "_backend"):
+                if (
+                    hasattr(target_client._backend, "_session")
+                    and target_client._backend._session
+                ):
+                    target_client._backend._session.close()
+                if (
+                    hasattr(target_client._backend, "_device")
+                    and target_client._backend._device
+                ):
+                    target_client._backend._device.close()
+        except Exception:
+            pass
+
+        try:
+            target_client.set_disconnected_callback(None)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        if not address:
+            self.client = None
+        else:
+            self.clients.pop(address.upper(), None)
 
     async def connect(self):
         """Connect to Nuanic ring with automatic retry and recovery."""
@@ -403,26 +412,7 @@ class NuanicConnector:
                     except Exception:
                         pass
 
-                self.clients[address] = client
-
-                if device is not None:
-                    self.devices[address] = device
-
-                self.client = client
-                self.device = device
-                self.target_address = address
-                _save_last_address(address)
-
-                # Automatic boot time sync to resolve 1970 timestamp epoch
-                if self.auto_sync_time:
-                    try:
-                        await self.sync_time(address=address)
-                    except Exception as sync_exc:
-                        _log.debug(
-                            "Automatic clock sync on boot failed for %s: %s",
-                            address,
-                            sync_exc,
-                        )
+                await self._register_connected_device(address, client, device)
 
                 return True
             except asyncio.CancelledError:
@@ -443,6 +433,31 @@ class NuanicConnector:
                     await asyncio.sleep(self.connect_backoff_seconds)
 
         return False
+
+    async def _register_connected_device(
+        self, address: str, client: BleakClient, device: Any = None
+    ) -> None:
+        """Register a connected client/device and perform automatic boot-time clock sync."""
+        self.clients[address] = client
+
+        if device is not None:
+            self.devices[address] = device
+
+        self.client = client
+        self.device = device
+        self.target_address = address
+        _save_last_address(address)
+
+        # Automatic boot time sync to resolve 1970 timestamp epoch
+        if self.auto_sync_time:
+            try:
+                await self.sync_time(address=address)
+            except Exception as sync_exc:
+                _log.debug(
+                    "Automatic clock sync on boot failed for %s: %s",
+                    address,
+                    sync_exc,
+                )
 
     async def connect_multiple(
         self,
@@ -477,6 +492,42 @@ class NuanicConnector:
 
         return results
 
+    async def _disconnect_one(self, address: str) -> None:
+        """Clean up a single device's client and device registry entry."""
+        address = address.upper()
+        if address not in self.clients:
+            return
+        try:
+            await self._cleanup_client(address)
+        except Exception:
+            pass
+        finally:
+            self.devices.pop(address, None)
+        print(f"[OK] Disconnected {address}")
+
+    async def _disconnect_all(self) -> None:
+        """Clean up every registered client and the primary connection."""
+        had_any = False
+        for addr in list(self.clients.keys()):
+            had_any = True
+            try:
+                await self._cleanup_client(addr)
+            except Exception:
+                pass
+            finally:
+                self.devices.pop(addr, None)
+
+        if self.client:
+            was_connected = bool(getattr(self.client, "is_connected", False))
+            await self._cleanup_client()
+            if was_connected:
+                had_any = True
+
+        if had_any:
+            print("[OK] Disconnected")
+        else:
+            print("[INFO] No active BLE connection to close")
+
     async def disconnect(self, address: Optional[str] = None) -> None:
         """Disconnect from ring.
 
@@ -485,36 +536,9 @@ class NuanicConnector:
         forced unpair for troubleshooting.
         """
         if address:
-            address = address.upper()
-            if address in self.clients:
-                try:
-                    await self._cleanup_client(address)
-                except Exception:
-                    pass
-                finally:
-                    self.devices.pop(address, None)
-                print(f"[OK] Disconnected {address}")
+            await self._disconnect_one(address)
         else:
-            had_any = False
-            for addr in list(self.clients.keys()):
-                had_any = True
-                try:
-                    await self._cleanup_client(addr)
-                except Exception:
-                    pass
-                finally:
-                    self.devices.pop(addr, None)
-
-            if self.client:
-                was_connected = bool(getattr(self.client, "is_connected", False))
-                await self._cleanup_client()
-                if was_connected:
-                    had_any = True
-
-            if had_any:
-                print("[OK] Disconnected")
-            else:
-                print("[INFO] No active BLE connection to close")
+            await self._disconnect_all()
 
         if self.unpair_on_disconnect and self.device:
             await self._unpair_device()

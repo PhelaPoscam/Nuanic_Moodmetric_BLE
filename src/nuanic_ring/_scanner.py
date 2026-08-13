@@ -194,7 +194,7 @@ class RingScanner:
             f"'{self.target_address}'" if self.target_address else "(any Nuanic)"
         )
 
-        max_attempts = 1 if self.target_address else self.max_scan_attempts
+        max_attempts = self._compute_max_attempts()
         for attempt in range(1, max_attempts + 1):
             try:
                 devices = await BleakScanner.discover(timeout=2.0)
@@ -221,6 +221,44 @@ class RingScanner:
                     await asyncio.sleep(0.5)
 
         return None
+
+    def _compute_max_attempts(self) -> int:
+        """A targeted search needs at most one attempt; broad scans use the configured retries."""
+        return 1 if self.target_address else self.max_scan_attempts
+
+    def _merge_scan_devices(
+        self,
+        devices_map: dict,
+        merged: dict[str, dict],
+        include_device: bool,
+    ) -> None:
+        """Merge Nuanic/Moodmetric devices from one scan result into the accumulator."""
+        for device, adv in devices_map.values():
+            name = device.name or ""
+            clean_name = _sanitize_name(name)
+            adv_uuids = [u.lower() for u in adv.service_uuids]
+
+            is_nuanic = "Nuanic" in name or NUANIC_SERVICE_UUID.lower() in adv_uuids
+            is_moodmetric = "Moodmetric" in name or any(
+                u.lower() in adv_uuids for u in MOODMETRIC_SERVICE_UUIDS
+            )
+
+            if is_nuanic or is_moodmetric:
+                addr = _sanitize_address(device.address or "")
+                if not addr:
+                    continue
+
+                entry = {
+                    "address": addr,
+                    "name": (
+                        clean_name
+                        if clean_name
+                        else ("Nuanic" if is_nuanic else "Moodmetric")
+                    ),
+                }
+                if include_device:
+                    entry["device"] = device
+                merged[addr] = entry
 
     async def list_available_rings(
         self,
@@ -252,34 +290,7 @@ class RingScanner:
                     timeout=max(2.0, current_timeout), return_adv=True
                 )
 
-                for device, adv in devices_map.values():
-                    name = device.name or ""
-                    clean_name = _sanitize_name(name)
-                    adv_uuids = [u.lower() for u in adv.service_uuids]
-
-                    is_nuanic = (
-                        "Nuanic" in name or NUANIC_SERVICE_UUID.lower() in adv_uuids
-                    )
-                    is_moodmetric = "Moodmetric" in name or any(
-                        u.lower() in adv_uuids for u in MOODMETRIC_SERVICE_UUIDS
-                    )
-
-                    if is_nuanic or is_moodmetric:
-                        addr = _sanitize_address(device.address or "")
-                        if not addr:
-                            continue
-
-                        entry = {
-                            "address": addr,
-                            "name": (
-                                clean_name
-                                if clean_name
-                                else ("Nuanic" if is_nuanic else "Moodmetric")
-                            ),
-                        }
-                        if include_device:
-                            entry["device"] = device  # type: ignore[assignment]
-                        merged[addr] = entry
+                self._merge_scan_devices(devices_map, merged, include_device)
 
                 if stop_if_found and merged:
                     break
