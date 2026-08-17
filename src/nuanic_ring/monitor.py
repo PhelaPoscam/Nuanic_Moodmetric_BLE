@@ -1126,29 +1126,27 @@ class NuanicMonitor:
         return _cb
 
     async def _subscribe_device_streams(self, mac: str) -> bool:
-        imu_ok = await self.connector.subscribe_to_imu(
-            self._make_imu_callback(mac),
-            address=mac,
+        results = await asyncio.gather(
+            self.connector.subscribe_to_imu(self._make_imu_callback(mac), address=mac),
+            self.connector.subscribe_to_stress(
+                self._make_stress_callback(mac), address=mac
+            ),
+            self.connector.subscribe_to_raw_eda(
+                self._make_raw_eda_callback(mac), address=mac
+            ),
+            self.connector.subscribe_to_live_eda(
+                self._make_live_eda_callback(mac), address=mac
+            ),
         )
-        stress_ok = await self.connector.subscribe_to_stress(
-            self._make_stress_callback(mac),
-            address=mac,
-        )
-        raw_ok = await self.connector.subscribe_to_raw_eda(
-            self._make_raw_eda_callback(mac),
-            address=mac,
-        )
-        live_ok = await self.connector.subscribe_to_live_eda(
-            self._make_live_eda_callback(mac),
-            address=mac,
-        )
-        return imu_ok and stress_ok and raw_ok and live_ok
+        return all(results)
 
     async def _unsubscribe_device_streams(self, mac: str) -> None:
-        await self.connector.unsubscribe_from_imu(address=mac)
-        await self.connector.unsubscribe_from_stress(address=mac)
-        await self.connector.unsubscribe_from_raw_eda(address=mac)
-        await self.connector.unsubscribe_from_live_eda(address=mac)
+        await asyncio.gather(
+            self.connector.unsubscribe_from_imu(address=mac),
+            self.connector.unsubscribe_from_stress(address=mac),
+            self.connector.unsubscribe_from_raw_eda(address=mac),
+            self.connector.unsubscribe_from_live_eda(address=mac),
+        )
 
     async def _warmup_sequence(self, mac: str, device: Any = None) -> None:
         """Optional firmware warmup: prime the ring at the target rate, then release."""

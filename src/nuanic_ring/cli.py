@@ -484,9 +484,67 @@ def _cap_multi_ring_hz(console: Any, args: argparse.Namespace) -> None:
         args.target_hz = 16
 
 
+def _sanitize_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Strip non-ASCII characters from string values for legacy consoles."""
+    return [
+        {
+            k: ("".join(c for c in str(v) if ord(c) < 128) if isinstance(v, str) else v)
+            for k, v in r.items()
+        }
+        for r in rows
+    ]
+
+
+async def _run_dashboard(
+    monitor: NuanicMonitor,
+    console: Any,
+    box_style: Any,
+    args: argparse.Namespace,
+) -> int:
+    from rich.live import Live
+
+    refresh_interval = max(0.05, args.ui_refresh_ms / 1000.0)
+    started_at = asyncio.get_event_loop().time()
+    marker_hotkeys = _build_marker_hotkeys(args.marker_hotkey)
+    marker_reader = _NonBlockingLineReader(marker_hotkeys) if args.markers else None
+    marker_legend = _format_marker_legend(marker_hotkeys) if args.markers else ""
+
+    if marker_legend:
+        console.print(f"[cyan]Markers enabled:[/cyan] {marker_legend}")
+
+    try:
+        with Live(
+            console=console, refresh_per_second=int(1 / refresh_interval)
+        ) as live:
+            while True:
+                elapsed = asyncio.get_event_loop().time() - started_at
+                rows = monitor.dashboard_rows()
+                try:
+                    live.update(
+                        _build_dashboard_renderable(
+                            rows, elapsed, box_style, marker_legend
+                        )
+                    )
+                except UnicodeEncodeError:
+                    live.update(
+                        _build_dashboard_renderable(
+                            _sanitize_rows(rows), elapsed, box_style, marker_legend
+                        )
+                    )
+                if args.duration is not None and elapsed >= args.duration:
+                    break
+                if marker_reader:
+                    _poll_marker_input(marker_reader, monitor)
+                await asyncio.sleep(refresh_interval)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        await monitor.stop_multi()
+    return 0
+
+
 async def _run_monitor_cli(args: argparse.Namespace) -> int:
     from rich.console import Console
-    from rich.live import Live
 
     console = Console(force_terminal=True, emoji=False)
     box_style = None
@@ -574,67 +632,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         console.print("[red][FAIL] Could not start monitoring any ring[/red]")
         return 1
 
-    refresh_interval = max(0.05, args.ui_refresh_ms / 1000.0)
-    started_at = asyncio.get_event_loop().time()
-    marker_hotkeys = _build_marker_hotkeys(args.marker_hotkey)
-    marker_reader = _NonBlockingLineReader(marker_hotkeys) if args.markers else None
-
-    if args.markers:
-        console.print(
-            f"[cyan]Markers enabled:[/cyan] {_format_marker_legend(marker_hotkeys)}"
-        )
-
-    try:
-        with Live(
-            console=console, refresh_per_second=int(1 / refresh_interval)
-        ) as live:
-            while True:
-                elapsed = asyncio.get_event_loop().time() - started_at
-                rows = monitor.dashboard_rows()
-                try:
-                    renderable = _build_dashboard_renderable(
-                        rows,
-                        elapsed,
-                        box_style,
-                        _format_marker_legend(marker_hotkeys) if args.markers else "",
-                    )
-                    live.update(renderable)
-                except UnicodeEncodeError:
-                    safe_rows = [
-                        {
-                            k: (
-                                "".join(c for c in str(v) if ord(c) < 128)
-                                if isinstance(v, str)
-                                else v
-                            )
-                            for k, v in r.items()
-                        }
-                        for r in rows
-                    ]
-                    live.update(
-                        _build_dashboard_renderable(
-                            safe_rows,
-                            elapsed,
-                            box_style,
-                            (
-                                _format_marker_legend(marker_hotkeys)
-                                if args.markers
-                                else ""
-                            ),
-                        )
-                    )
-
-                if args.duration is not None and elapsed >= args.duration:
-                    break
-                if marker_reader:
-                    _poll_marker_input(marker_reader, monitor)
-                await asyncio.sleep(refresh_interval)
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        pass
-    finally:
-        await monitor.stop_multi()
-
-    return 0
+    return await _run_dashboard(monitor, console, box_style, args)
 
 
 if __name__ == "__main__":
