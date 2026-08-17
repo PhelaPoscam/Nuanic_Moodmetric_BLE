@@ -329,16 +329,18 @@ class NuanicConnector:
 
     async def _stop_all_notifications(self, target_client: BleakClient) -> None:
         """Best-effort stop of all notification streams on a client."""
-        for char_uuid in [
-            self.LIVE_DNE_UUID,
-            self.IMU_BATCH_UUID,
-            self.STATE_UUID,
-            self.LIVE_EDA_UUID,
-        ]:
-            try:
-                await target_client.stop_notify(char_uuid)
-            except Exception:
-                pass
+        await asyncio.gather(
+            *(
+                target_client.stop_notify(char_uuid)
+                for char_uuid in [
+                    self.LIVE_DNE_UUID,
+                    self.IMU_BATCH_UUID,
+                    self.STATE_UUID,
+                    self.LIVE_EDA_UUID,
+                ]
+            ),
+            return_exceptions=True,
+        )
 
     async def _teardown_client_backend(
         self, target_client: BleakClient, address: Optional[str] = None
@@ -627,6 +629,13 @@ class NuanicConnector:
                 addrs.append(address)
         return addrs
 
+    def _require_client(self, address: Optional[str] = None) -> Optional[BleakClient]:
+        """Return a connected client, or *None* if unavailable."""
+        client = self.get_client(address)
+        if client and getattr(client, "is_connected", False):
+            return client
+        return None
+
     # ------------------------------------------------------------------
     # Subscription helpers
     # ------------------------------------------------------------------
@@ -729,8 +738,8 @@ class NuanicConnector:
         address: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Attempt to request ring sample-rate configuration from host side."""
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             return {
                 "ok": False,
                 "status": "not-connected",
@@ -808,8 +817,8 @@ class NuanicConnector:
             window.**  Physiological streams will be dead for 60 s after this
             call.  Writing the mode the ring is already in is a no-op.
         """
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             _log.warning("set_mode: not connected")
             return False
         try:
@@ -833,8 +842,8 @@ class NuanicConnector:
         Returns:
             True if the write was acknowledged.
         """
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             _log.warning("set_sample_rate: not connected")
             return False
         hz = max(3, min(16, int(hz)))
@@ -851,8 +860,8 @@ class NuanicConnector:
 
         Returns raw bytes, or None if the read fails / buffer is empty.
         """
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             return None
         try:
             data = await client.read_gatt_char(self.STORAGE_UUID)
@@ -869,8 +878,8 @@ class NuanicConnector:
         Must be called after each boot so measurement timestamps start from real time
         instead of 1970.
         """
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             _log.warning("sync_time: not connected")
             return False
         if timestamp_ms is None:
@@ -892,8 +901,8 @@ class NuanicConnector:
         Returns:
             Dict containing 'size_bytes', 'used_bytes', 'available_bytes', and 'percent_used'.
         """
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             return None
         try:
             data = await client.read_gatt_char(self.STORAGE_USAGE_UUID)
@@ -917,8 +926,8 @@ class NuanicConnector:
         address: Optional[str] = None,
     ) -> bool:
         """Rewind internal storage reading pointer for development testing."""
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             return False
         payload = struct.pack("<HQ", int(boot_count), int(timestamp_ms))
         try:
@@ -936,8 +945,8 @@ class NuanicConnector:
             "sm": Put device to shipping mode (disconnects battery until docked).
             "ra": Reset onboard DNE algorithm.
         """
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             return False
         if len(cmd) != 2:
             _log.error("send_command: command must be exactly 2 characters")
@@ -952,8 +961,8 @@ class NuanicConnector:
 
     async def read_storage_format(self, address: Optional[str] = None) -> Optional[int]:
         """Read the active storage format from STORAGE_FORMAT register (0, 1, or 2)."""
-        client = self.get_client(address)
-        if not client or not getattr(client, "is_connected", False):
+        client = self._require_client(address)
+        if not client:
             return None
         try:
             data = await client.read_gatt_char(self.STORAGE_FORMAT_UUID)

@@ -1,8 +1,9 @@
 """Standalone live viewer for Nuanic ring telemetry streams.
 
-ponytail: matplotlib runs in a thread pool (run_in_executor) so the GUI
-event loop never shares a thread with asyncio. Shared state guarded by
-threading.Lock.
+ponytail: matplotlib runs on the main thread while BLE/asyncio runs on a
+background daemon thread.  Thread safety relies on CPython's GIL making
+deque append/iterate atomic — no explicit lock is needed for the current
+single-writer (asyncio) / single-reader (matplotlib) access pattern.
 """
 
 import asyncio
