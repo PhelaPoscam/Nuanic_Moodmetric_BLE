@@ -59,6 +59,18 @@ class FakeConnector:
     async def disconnect(self, address=None):
         self.connected = False
 
+    async def subscribe_to_imu_motion(self, callback, address=None):
+        return True
+
+    async def subscribe_to_live_dne(self, callback, address=None):
+        return True
+
+    async def subscribe_to_finger_state(self, callback, address=None):
+        return True
+
+    async def subscribe_to_raw_eda_ohms(self, callback, address=None):
+        return True
+
     async def subscribe_to_imu(self, callback, address=None):
         return True
 
@@ -70,6 +82,18 @@ class FakeConnector:
 
     async def subscribe_to_live_eda(self, callback, address=None):
         return True
+
+    async def unsubscribe_from_imu_motion(self, address=None):
+        pass
+
+    async def unsubscribe_from_live_dne(self, address=None):
+        pass
+
+    async def unsubscribe_from_finger_state(self, address=None):
+        pass
+
+    async def unsubscribe_from_raw_eda_ohms(self, address=None):
+        pass
 
     async def unsubscribe_from_imu(self, address=None):
         pass

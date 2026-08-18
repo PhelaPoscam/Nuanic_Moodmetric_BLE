@@ -129,7 +129,51 @@ For phasic analysis (SCR detection, onset latency, amplitude):
 - Hardware ceiling: max sample rate is **16 Hz** — adequate for SCR amplitude and latency, marginal for fast waveform morphology.
 - The onboard DNE score is a tonic-level measure, not phasic. It does not show individual SCR events.
 
-For the full reverse-engineering breakdown, see [Ring Reverse-Engineering Report](docs/ring_reverse_engineering_report.md).
+---
+
+## 🏛️ SDK Architecture
+
+The codebase is organized into decoupled submodules designed for high throughput, low jitter, and modular extension:
+
+```
+src/nuanic_ring/
+├── core/             # BLE connection lifecycle, GATT profiles, and radio discovery
+│   ├── connector.py  # NuanicConnector (connect, subscribe, commands, offline storage)
+│   ├── scanner.py    # RingScanner (discovery & Windows Bluetooth radio management)
+│   └── profiles.py   # GATT UUIDs, register signatures, and profile detection
+├── telemetry/        # Telemetry ingestion, hardware time reconstruction & state tracking
+│   ├── device_state.py # RingDeviceState (thread-safe multi-ring live state dataclass)
+│   ├── time_sync.py  # TimeSynchronizer (ring clock unwrapping & smoothing)
+│   ├── rate_control.py # SamplingRateController (sample rate monitoring & throttle)
+│   └── callbacks.py  # Raw BLE notification packet decoders
+├── io/               # Strongly-typed schemas, streaming CSV writers, and provenance
+│   ├── schemas.py    # Dataclasses for packets (EdaPacket, ImuBatchPacket) & CSV rows
+│   ├── manifest.py   # Cryptographic session manifest generator (SHA-256 validation)
+│   └── writers.py    # Async non-blocking CSV writer loops
+├── dsp/              # Real-time DSP signal processing
+│   └── signal_processing.py # SignalConditioner (Median + 2nd-order Butterworth low-pass)
+└── monitor.py        # NuanicMonitor coordinator facade & rich TUI dashboard
+```
+
+---
+
+## 🔒 Scientific Data Provenance & Manifests
+
+Every live recording session automatically generates a cryptographic session manifest (`session_manifest.json`) alongside your session CSV logs:
+
+- **Hardware Metadata**: Ring MAC, firmware revision, serial number, boot count, and initial battery level.
+- **Session Provenance**: Start and stop ISO-8601 timestamps, duration, total packet count, and observed sample rate.
+- **Cryptographic File Hashes**: SHA-256 checksums generated for all exported CSV logs (`eda.csv`, `imu.csv`, `finger.csv`, `session.csv`) to guarantee data integrity in research pipelines.
+
+---
+
+## 📓 Interactive Jupyter Notebooks
+
+Hands-on tutorials and analysis recipes are included in the `examples/` directory:
+
+1. **[01_quickstart_stream.ipynb](examples/01_quickstart_stream.ipynb)**: Connect to a ring, set operational modes, and stream live EDA and motion telemetry with real-time callbacks.
+2. **[02_eda_and_motion_analysis.ipynb](examples/02_eda_and_motion_analysis.ipynb)**: Load multi-stream CSV logs with Pandas, inspect data provenance via `session_manifest.json`, apply dual-stage DSP filters, and perform phasic SCR and motion artifact detection.
+3. **[03_offline_flash_download.ipynb](examples/03_offline_flash_download.ipynb)**: Inspect onboard NOR flash memory, download offline historical session records, and plot autonomous wearable trends.
 
 ---
 
@@ -137,6 +181,7 @@ For the full reverse-engineering breakdown, see [Ring Reverse-Engineering Report
 
 Refer to the detailed documents below for deep dives into SDK features, file formats, and hardware interpretations:
 
-*   📂 **[CSV Log Format Guide](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/csv_format.md)**: Detailed breakdown of the output CSV columns, record types (`D306_EDA`, `LIVE_EDA_42DC`, etc.), scaling formulations, and offline Pandas parsing.
-*   📂 **[Ring Master Guide](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/ring_master_guide.md)**: Setup workflows, advanced multi-ring controls, troubleshooting, and the **[Full CLI Argument Reference](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/ring_master_guide.md#%EF%B8%8F-cli-argument-reference-nuanic-ring-monitor)** & **[GATT UUID Mapping](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/ring_master_guide.md#-gatt-uuid-mapping)** tables.
-*   📂 **[Ring Reverse-Engineering Report](file:///c:/Code%20-%20Projects/Python%20Projects/Nuanic_Moodmetric_BLE/docs/ring_reverse_engineering_report.md)**: Low-level BLE forensics, profile validations, and raw characteristic payload structures.
+*   📂 **[CSV Log Format Guide](docs/csv_format.md)**: Detailed breakdown of the output CSV columns, record types (`D306_EDA`, `LIVE_EDA_42DC`, etc.), scaling formulations, and offline Pandas parsing.
+*   📂 **[Ring Master Guide](docs/ring_master_guide.md)**: Setup workflows, advanced multi-ring controls, troubleshooting, and the **[Full CLI Argument Reference](docs/ring_master_guide.md#%EF%B8%8F-cli-argument-reference-nuanic-ring-monitor)** & **[GATT UUID Mapping](docs/ring_master_guide.md#-gatt-uuid-mapping)** tables.
+*   📂 **[Ring Reverse-Engineering Report](docs/ring_reverse_engineering_report.md)**: Low-level BLE forensics, profile validations, and raw characteristic payload structures.
+
