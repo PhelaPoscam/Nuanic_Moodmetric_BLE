@@ -1,5 +1,6 @@
-"""Ring profile definitions and detection helpers (Compatibility Shim)."""
+"""Core BLE connection, device discovery, and profile definitions."""
 
+from nuanic_ring.core.connector import NuanicConnector
 from nuanic_ring.core.profiles import (
     BATTERY_UUID,
     COMMAND_UUID,
@@ -22,8 +23,19 @@ from nuanic_ring.core.profiles import (
     detect_ring_profile_from_service_uuids,
     notify_uuids_for_profile,
 )
+from nuanic_ring.core.scanner import (
+    RingScanner,
+    _get_windows_paired_rings,
+    _load_last_address,
+    _reset_bluetooth_radio,
+    _sanitize_address,
+    _sanitize_name,
+    _save_last_address,
+)
 
 __all__ = [
+    "NuanicConnector",
+    "RingScanner",
     "NUANIC_PROFILE",
     "MOODMETRIC_PROFILE",
     "UNKNOWN_PROFILE",
@@ -44,4 +56,10 @@ __all__ = [
     "BATTERY_UUID",
     "detect_ring_profile_from_service_uuids",
     "notify_uuids_for_profile",
+    "_sanitize_address",
+    "_sanitize_name",
+    "_save_last_address",
+    "_load_last_address",
+    "_reset_bluetooth_radio",
+    "_get_windows_paired_rings",
 ]

@@ -98,3 +98,7 @@ analysis/
 .repowise/
 .venv-repowise/
 
+# Project-specific local data and scratch scripts
+data/
+scratch/
+
