@@ -80,7 +80,9 @@ def get_sdk_version() -> str:
 
         return version("nuanic-ring")
     except Exception:
-        return "0.2.0"
+        from nuanic_ring import __version__
+
+        return __version__
 
 
 def generate_session_manifest(
