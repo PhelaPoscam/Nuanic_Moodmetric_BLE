@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+MANIFEST_FILENAME = "session_manifest.json"
+
 
 def compute_sha256(file_path: Path) -> str:
     """Compute the SHA-256 hexadecimal digest for a file."""
@@ -159,6 +161,5 @@ def generate_session_manifest(
         system_info=sys_info,
     )
 
-    manifest_path = session_dir / "session_manifest.json"
-    manifest.write_to_file(manifest_path)
+    manifest.write_to_file(session_dir / MANIFEST_FILENAME)
     return manifest

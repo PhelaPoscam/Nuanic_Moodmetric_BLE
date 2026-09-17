@@ -1,61 +1,29 @@
-#!/usr/bin/env python3
-"""Ring diagnostics — service discovery, notify profiling, write probes, buffer inspection.
+"""Ring diagnostics — service discovery, notify profiling, buffer inspection.
 
-Used both as ``nuanic-ring-discover`` entry point and by ``cli.py --discover``.
-The diagnostic body lives in :func:`run_diagnostics` so both consumers share
-one implementation.
+Driven by ``nuanic-ring-monitor --discover``; :func:`run_diagnostics` is the
+entry point and expects an already-connected BLE client.
 """
 
-import argparse
 import asyncio
-import platform
 import struct
-import sys
 import time
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict
 
-try:
-    from nuanic_ring.connector import NuanicConnector
-    from nuanic_ring.ring_profiles import (
-        MOODMETRIC_PROFILE,
-        NUANIC_PROFILE,
-        UNKNOWN_PROFILE,
-        detect_ring_profile_from_service_uuids,
-        notify_uuids_for_profile,
-    )
-except ModuleNotFoundError:
-    print(
-        "[ERROR] Could not import 'nuanic_ring'. "
-        "Install the project first: pip install -e .[dev]"
-    )
-    raise SystemExit(1)
+from nuanic_ring.core.profiles import (
+    LIVE_DNE_UUID,
+    LIVE_EDA_UUID,
+    NUANIC_PROFILE,
+    NUANIC_SERVICE_UUID,
+    STORAGE_UUID,
+    UNKNOWN_PROFILE,
+    detect_ring_profile_from_service_uuids,
+    notify_uuids_for_profile,
+)
+from nuanic_ring.io.schemas import D306Packet, LiveEdaPacket
 
-SERVICE_UUID = NuanicConnector.NUANIC_SERVICE_UUID
-STORAGE_UUID = NuanicConnector.STORAGE_UUID
-LIVE_EDA_UUID = NuanicConnector.LIVE_EDA_UUID
-
-WRITE_ONLY_CHARS = {
-    NuanicConnector.STORAGE_REWIND_UUID: "WRITE_1",
-}
-
-WRITE_READ_CHARS = {
-    NuanicConnector.SAMPLE_RATE_UUID: "CONFIG_1",
-    NuanicConnector.REALTIME_UUID: "CONFIG_2",
-    NuanicConnector.STORAGE_FORMAT_UUID: "CONFIG_3",
-}
-
-WRITE_PATTERNS = {
-    "enable_1": b"\x01",
-    "enable_1_0": b"\x01\x00",
-    "enable_2": b"\x02",
-    "enable_all": b"\xff",
-    "mode_3": b"\x03",
-    "stream_1_1": b"\x01\x01",
-    "extended_4": b"\x04",
-    "reset_0": b"\x00",
-}
+SERVICE_UUID = NUANIC_SERVICE_UUID
 
 
 class NotifyStats:
@@ -81,125 +49,6 @@ class NotifyStats:
         if not self.first_ts or not self.last_ts or self.last_ts <= self.first_ts:
             return 0.0
         return self.count / (self.last_ts - self.first_ts)
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Ring diagnostics: discover, profile notify streams, write-probe, and inspect buffer",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --ring-addr 56:C2:72:F2:07:04
-  %(prog)s --ring-addr 56:C2:72:F2:07:04 --profile-seconds 20
-  %(prog)s --ring-addr 56:C2:72:F2:07:04 --write-probe --buffer-poll 5
-  %(prog)s --ring-addr 56:C2:72:F2:07:04 --no-profile --buffer-only
-""",
-    )
-    parser.add_argument(
-        "legacy_ring_addr",
-        nargs="?",
-        help="Optional BLE address (legacy positional argument).",
-    )
-    parser.add_argument(
-        "--ring-addr",
-        default=None,
-        help="BLE address of ring. If omitted, connector selection is used.",
-    )
-    parser.add_argument(
-        "--profile-seconds",
-        type=int,
-        default=15,
-        help="Duration for notify profiling (default: 15).",
-    )
-    parser.add_argument(
-        "--no-profile",
-        action="store_true",
-        help="Skip notify profiling.",
-    )
-    parser.add_argument(
-        "--write-probe",
-        action="store_true",
-        help="Run write probes against known config characteristics.",
-    )
-    parser.add_argument(
-        "--buffer-poll",
-        type=int,
-        default=1,
-        help="Read buffer characteristic N times (default: 1).",
-    )
-    parser.add_argument(
-        "--buffer-interval",
-        type=float,
-        default=2.0,
-        help="Seconds between buffer reads when --buffer-poll > 1 (default: 2.0).",
-    )
-    parser.add_argument(
-        "--buffer-only",
-        action="store_true",
-        help="Only inspect buffer (skip discovery and profile).",
-    )
-    parser.add_argument(
-        "--only-stream-chars",
-        action="store_true",
-        help=(
-            "In discovery output, show only characteristics with "
-            "Notify/Indicate properties"
-        ),
-    )
-    parser.add_argument(
-        "--subscribe-core-streams",
-        action="store_true",
-        help=(
-            "Subscribe to the 4 proprietary notify streams and print "
-            "timestamp/uuid/len/hex continuously"
-        ),
-    )
-    parser.add_argument(
-        "--listen-seconds",
-        type=int,
-        default=None,
-        help=(
-            "Optional duration for --subscribe-core-streams. "
-            "Default: run until Ctrl+C/disconnect"
-        ),
-    )
-    parser.add_argument(
-        "--ring-profile",
-        choices=["auto", NUANIC_PROFILE, MOODMETRIC_PROFILE],
-        default="auto",
-        help=(
-            "Profile selection for profile-specific operations. "
-            "Default: auto-detect from discovered services."
-        ),
-    )
-    if platform.system() == "Windows":
-        parser.add_argument(
-            "--keep-paired-on-exit",
-            action="store_true",
-            help="[Windows only] Prevents un-pairing from the device on exit. By default, un-pairing is done to ensure clean reconnections.",
-        )
-    else:
-        parser.add_argument(
-            "--unpair-on-exit",
-            action="store_true",
-            help="Force OS un-pair on exit. Can help with connection issues on some systems.",
-        )
-    return parser.parse_args()
-
-
-def detect_profile_from_client(client) -> str:
-    service_uuids = [service.uuid for service in client.services]
-    return detect_ring_profile_from_service_uuids(service_uuids)
-
-
-def resolve_profile(client, requested_profile: str) -> str:
-    if requested_profile != "auto":
-        return requested_profile
-    return detect_profile_from_client(client)
-
-
-def pick_ring_addr(args: argparse.Namespace) -> Optional[str]:
-    return args.ring_addr or args.legacy_ring_addr
 
 
 def print_header(title: str):
@@ -340,31 +189,6 @@ async def profile_notify(client, chars, seconds: int):
             print("  note: algo/dne notify remained silent in this run")
 
 
-async def run_write_probe(client):
-    print_header("STEP 4: WRITE PROBE")
-    for name, payload in WRITE_PATTERNS.items():
-        print(f"\n[CMD] {name}: {payload.hex()}")
-        for uuid, label in WRITE_READ_CHARS.items():
-            try:
-                await client.write_gatt_char(uuid, payload)
-                try:
-                    echoed = await client.read_gatt_char(uuid)
-                    print(
-                        f"  [OK] {label} ({uuid[:8]}...) echo={bytes(echoed).hex()[:32]}"
-                    )
-                except Exception:
-                    print(f"  [OK] {label} ({uuid[:8]}...) write only in this session")
-            except Exception as exc:
-                print(f"  [FAIL] {label} ({uuid[:8]}...): {exc}")
-
-        for uuid, label in WRITE_ONLY_CHARS.items():
-            try:
-                await client.write_gatt_char(uuid, payload)
-                print(f"  [OK] {label} ({uuid[:8]}...)")
-            except Exception as exc:
-                print(f"  [FAIL] {label} ({uuid[:8]}...): {exc}")
-
-
 async def inspect_buffer(client, polls: int, interval: float):
     print_header("STEP 5: BUFFER INSPECTION")
     previous = None
@@ -391,48 +215,31 @@ def _format_hex_spaced(data: bytes) -> str:
     return " ".join(f"{b:02X}" for b in data)
 
 
-def parse_eda_data(sender, data: bytearray):
-    """Parse 16-byte Live DNE frame and print key fields.
-
-    Layout (little-endian):
-    - bytes 0-7: Unix timestamp in ms (uint64)
-    - bytes 8-11: instant indicator normalized around 1e6 (int32)
-    - bytes 12-15: DNE score (int32)
-    """
-    payload = bytes(data)
-    ts = datetime.now().isoformat(timespec="milliseconds")
-    if len(payload) != 16:
-        print(
-            f"[{ts}] [LIVE DNE STREAM] Invalid payload length: {len(payload)} "
-            f"(expected 16)"
+def _decode_nuanic_stream(char_uuid: str, payload: bytes) -> str | None:
+    """Human-readable line for the two decodable Nuanic streams, else ``None``."""
+    uuid = char_uuid.lower()
+    if uuid == LIVE_DNE_UUID.lower():
+        packet = D306Packet.from_bytes(payload)
+        if packet is None:
+            return f"[LIVE DNE] bad payload length: {len(payload)} (expected 16)"
+        return (
+            f"[LIVE DNE] Timestamp: {packet.timestamp_ms} ms | "
+            f"Instant Indicator: {packet.instant} | DNE: {packet.dne}"
         )
-        return
 
-    timestamp_ms, instant, dne = struct.unpack("<Qii", payload)
-    print(
-        f"[{ts}] [LIVE DNE] Timestamp: {timestamp_ms} ms | Instant Indicator: {instant} | "
-        f"DNE: {dne}"
-    )
-
-
-def parse_live_eda(sender, data: bytearray):
-    """Parse 14-byte Live EDA frame."""
-    payload = bytes(data)
-    ts = datetime.now().isoformat(timespec="milliseconds")
-    if len(payload) != 14:
-        print(
-            f"[{ts}] [LIVE EDA STREAM] Invalid payload length: {len(payload)} "
-            f"(expected 14)"
+    if uuid == LIVE_EDA_UUID.lower():
+        eda = LiveEdaPacket.from_bytes(payload)
+        if eda is None:
+            return f"[LIVE EDA] bad payload length: {len(payload)} (expected 14)"
+        ohms = eda.eda_raw_ohms
+        cond_us = (1_000_000.0 / ohms) if ohms > 0 else 0.0
+        return (
+            f"[LIVE EDA] Boot: {eda.boot_count} | "
+            f"Timestamp: {eda.timestamp_ms} ms | "
+            f"Resistance: {ohms / 1000.0:.3f} kOhm | Conductance: {cond_us:.3f} uS"
         )
-        return
 
-    boot_count, timestamp_ms, eda_ohm = struct.unpack("<HQI", payload)
-    res_kohm = eda_ohm / 1000.0
-    cond_us = (1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0
-    print(
-        f"[{ts}] [LIVE EDA] Boot: {boot_count} | Timestamp: {timestamp_ms} ms | "
-        f"Resistance: {res_kohm:.3f} kOhm | Conductance: {cond_us:.3f} uS"
-    )
+    return None
 
 
 def _print_stream_summary(
@@ -470,7 +277,12 @@ async def subscribe_core_streams(
     """
     print_header("LIVE CORE STREAMS")
 
-    resolved_profile = resolve_profile(client, ring_profile)
+    if ring_profile != "auto":
+        resolved_profile = ring_profile
+    else:
+        resolved_profile = detect_ring_profile_from_service_uuids(
+            [service.uuid for service in client.services]
+        )
     active_profile_label = resolved_profile.upper()
 
     if resolved_profile == UNKNOWN_PROFILE:
@@ -489,18 +301,6 @@ async def subscribe_core_streams(
         uuid.lower(): NotifyStats() for uuid in notify_uuids
     }
 
-    disconnected = asyncio.Event()
-
-    def on_disconnect(_c):
-        print("\n[DISCONNECT] Ring disconnected")
-        disconnected.set()
-
-    try:
-        client.set_disconnected_callback(on_disconnect)
-    except Exception:
-        # Some backends may not support this callback.
-        pass
-
     active_uuids: list[str] = []
 
     for uuid in notify_uuids:
@@ -509,20 +309,15 @@ async def subscribe_core_streams(
             def make_cb(char_uuid: str):
                 def cb(_sender, data):
                     payload = bytes(data)
-                    stats_key = char_uuid.lower()
-                    stream_stats[stats_key].add(payload)
-
-                    if resolved_profile == NUANIC_PROFILE:
-                        if char_uuid.lower() == "d306262b-c8c9-4c4b-9050-3a41dea706e5":
-                            parse_eda_data(_sender, bytearray(payload))
-                            return
-                        elif (
-                            char_uuid.lower() == "42dcb71b-1817-43bd-8ea3-7272780a1c9f"
-                        ):
-                            parse_live_eda(_sender, bytearray(payload))
-                            return
+                    stream_stats[char_uuid.lower()].add(payload)
 
                     ts = datetime.now().isoformat(timespec="milliseconds")
+                    if resolved_profile == NUANIC_PROFILE:
+                        decoded = _decode_nuanic_stream(char_uuid, payload)
+                        if decoded:
+                            print(f"[{ts}] {decoded}")
+                            return
+
                     print(
                         f"[{ts}] uuid={char_uuid} len={len(payload)} "
                         f"hex={_format_hex_spaced(payload)}"
@@ -547,13 +342,13 @@ async def subscribe_core_streams(
         print(f"[LISTEN] Running for {listen_seconds}s")
 
     try:
-        if listen_seconds is None:
-            while not disconnected.is_set():
-                await asyncio.sleep(1)
-        else:
-            end_time = time.time() + max(1, listen_seconds)
-            while time.time() < end_time and not disconnected.is_set():
-                await asyncio.sleep(1)
+        end_time = (
+            None if listen_seconds is None else time.time() + max(1, listen_seconds)
+        )
+        while client.is_connected and (end_time is None or time.time() < end_time):
+            await asyncio.sleep(1)
+        if not client.is_connected:
+            print("\n[DISCONNECT] Ring disconnected")
     finally:
         for uuid in active_uuids:
             try:
@@ -576,12 +371,11 @@ async def run_diagnostics(
     only_stream_chars: bool = False,
     no_profile: bool = False,
     profile_seconds: int = 15,
-    write_probe: bool = False,
 ) -> int:
     """Run the full diagnostic suite against a connected BLE client.
 
-    Callers that don't need every knob can rely on the defaults (no probe,
-    no write, 1 buffer poll, 15 s profile).
+    Callers that don't need every knob can rely on the defaults
+    (1 buffer poll, 15 s profile).
     """
     if subscribe_streams:
         await subscribe_core_streams(
@@ -613,90 +407,13 @@ async def run_diagnostics(
     if not no_profile:
         await profile_notify(client, all_chars, seconds=profile_seconds)
 
-    if write_probe:
+    if buffer_poll > 0:
         if target_chars:
-            await run_write_probe(client)
+            await inspect_buffer(client, polls=buffer_poll, interval=buffer_interval)
         else:
             print(
-                f"[SKIP] Write probe skipped because target service {SERVICE_UUID} is missing"
+                f"[SKIP] Buffer inspection skipped because target service "
+                f"{SERVICE_UUID} is missing"
             )
 
-    if buffer_poll > 0:
-        await _inspect_buffer_if_available(
-            client, target_chars, buffer_poll, buffer_interval
-        )
-
     return 0
-
-
-async def _inspect_buffer_if_available(
-    client,
-    target_chars,
-    buffer_poll: int,
-    buffer_interval: float,
-) -> None:
-    """Inspect the ring buffer, skipping cleanly when the target service is absent."""
-    if target_chars:
-        await inspect_buffer(client, polls=buffer_poll, interval=buffer_interval)
-    else:
-        print(
-            f"[SKIP] Buffer inspection skipped because target service {SERVICE_UUID} is missing"
-        )
-
-
-async def main() -> int:
-    args = parse_args()
-    ring_addr = pick_ring_addr(args)
-
-    unpair_on_exit_flag = False
-    if platform.system() == "Windows":
-        if not args.keep_paired_on_exit:
-            unpair_on_exit_flag = True
-    else:
-        if "unpair_on_exit" in args and args.unpair_on_exit:
-            unpair_on_exit_flag = True
-
-    connector = NuanicConnector(
-        target_address=ring_addr,
-        unpair_on_disconnect=unpair_on_exit_flag,
-        max_connect_attempts=3,
-        connect_backoff_seconds=2.0,
-        pair_on_connect=True,
-    )
-    try:
-        if not await connector.connect():
-            print("[FAIL] Could not connect to ring")
-            return 1
-
-        print(f"\n[INIT] Connected to: {connector.target_address or 'selected ring'}")
-        return await run_diagnostics(
-            connector.client,
-            subscribe_streams=args.subscribe_core_streams,
-            listen_seconds=args.listen_seconds,
-            ring_profile=args.ring_profile,
-            buffer_only=args.buffer_only,
-            buffer_poll=args.buffer_poll,
-            buffer_interval=args.buffer_interval,
-            only_stream_chars=args.only_stream_chars,
-            no_profile=args.no_profile,
-            profile_seconds=args.profile_seconds,
-            write_probe=args.write_probe,
-        )
-    except KeyboardInterrupt:
-        print("\n[STOP] Interrupted by user")
-        return 1
-    finally:
-        await connector.disconnect()
-
-
-def main_sync() -> int:
-    """Console-script entry point: run the async diagnostics main under asyncio."""
-    try:
-        return asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n[STOP] Interrupted by user")
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main_sync())

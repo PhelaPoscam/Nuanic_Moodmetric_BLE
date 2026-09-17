@@ -61,7 +61,7 @@ nuanic-ring-monitor --mode standby
 ### Discover Services
 
 ```bash
-nuanic-ring-discover --ring-addr AA:BB:CC:DD:EE:FF --profile-seconds 15
+nuanic-ring-monitor --discover --ring-addr AA:BB:CC:DD:EE:FF --profile-seconds 15
 ```
 
 ## Switching Operational Modes
@@ -173,7 +173,7 @@ Two profiles can appear in the field:
 Use profile-aware diagnostics when behavior is unclear:
 
 ```bash
-nuanic-ring-discover --subscribe-core-streams --ring-profile auto
+nuanic-ring-monitor --discover --subscribe-streams --ring-profile auto
 ```
 
 ### One-shot commands (no streaming)
@@ -227,20 +227,16 @@ nuanic-ring-monitor --shipping-mode --ring-addr AA:BB:CC:DD:EE:FF
 | `--equalize-mode` | Logic for handling rate mismatches (`off`, `log-only`, `enforce`). | `log-only` |
 | `--log` / `--no-log` | Enable or disable CSV recording. | `--log` |
 | `--log-dir` | Folder for session CSV output. | `data/ring_logs` |
-| `--csv-layout` | CSV output layout: `combined`, `split`, or `both`. | `combined` |
-| `--nuanic-export` | Output CSV in exact Nuanic format (overrides `--csv-layout` to `nuanic`). | False |
+| `--nuanic-export` | Write the combined CSV in the Nuanic Cloud export format. | False |
 | `--mode` | Ring operational mode: `live` (0x02), `research` (0x03), `raw_eda` (0x01), `standby` (0x00). | `raw_eda` |
 | `--filter` | Apply host-side median + 1.5 Hz Butterworth lowpass to EDA. Off by default. | False |
-| `--raw` | Deprecated no-op (was the old way to bypass the filter, which is now the default). Ignored. | False |
 | `--waveform` | Launch live Matplotlib plots instead of the TUI table. | False |
 | `--window-seconds` | [with `--waveform`] Plot window width in seconds. | 10 |
 | `--refresh-ms` | [with `--waveform`] Plot redraw interval. | 120ms |
 | `--smooth` | [with `--waveform`] EDA smoothing window size. | 1 |
 | `--markers` | Enable runtime marker input (SPACE and single-key hotkeys, plus `/m LABEL` + Enter). | False |
 | `--marker-hotkey` | Add or override a single-key marker hotkey. Repeatable. | `SPACE=marker, S=stimulus_on, B=baseline_start, R=rest_start` |
-| `--imu-refresh` | Batch size for dashboard IMU signal updates. | 5 |
 | `--ui-refresh-ms` | Dashboard UI redraw interval. | 200ms |
-| `--no-clear` | Do not clear the console before drawing the dashboard. | False |
 | `--use-warmup` | Enable legacy disconnect/reconnect priming cycle. | False |
 | `--warmup-delay` | Delay after firmware warmup before full connect. | 3.0s |
 | `--stagger-delay` | Seconds to wait between connecting multiple rings. | 1.25 |

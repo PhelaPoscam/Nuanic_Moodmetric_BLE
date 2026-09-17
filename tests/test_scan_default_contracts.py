@@ -1,12 +1,13 @@
 import inspect
 
-from nuanic_ring.connector import NuanicConnector
+from nuanic_ring.core.connector import NuanicConnector
+from nuanic_ring.core.scanner import RingScanner
 from nuanic_ring.monitor import NuanicMonitor
 
 
 def test_connector_scan_default_contracts():
-    list_sig = inspect.signature(NuanicConnector.list_available_rings)
-    discover_sig = inspect.signature(NuanicConnector.discover_all_matching_rings)
+    list_sig = inspect.signature(RingScanner.list_available_rings)
+    discover_sig = inspect.signature(RingScanner.discover_all_matching_rings)
 
     assert list_sig.parameters["scan_timeout"].default == 6.0
     assert list_sig.parameters["attempts"].default == 3
@@ -29,16 +30,16 @@ def test_new_parameters_and_defaults_contracts():
     assert init_sig.parameters["timeout"].default == 7.0
 
     # 2. list_available_rings new defaults
-    list_sig = inspect.signature(NuanicConnector.list_available_rings)
+    list_sig = inspect.signature(RingScanner.list_available_rings)
     assert list_sig.parameters["stop_if_found"].default is True
     assert list_sig.parameters["silent"].default is False
 
     # 3. list_available_rings_with_paired new defaults
-    paired_sig = inspect.signature(NuanicConnector.list_available_rings_with_paired)
+    paired_sig = inspect.signature(RingScanner.list_available_rings_with_paired)
     assert paired_sig.parameters["stop_if_found"].default is True
     assert paired_sig.parameters["silent"].default is False
 
     # 4. discover_all_matching_rings new defaults
-    discover_sig = inspect.signature(NuanicConnector.discover_all_matching_rings)
+    discover_sig = inspect.signature(RingScanner.discover_all_matching_rings)
     assert discover_sig.parameters["stop_if_found"].default is True
     assert discover_sig.parameters["silent"].default is False

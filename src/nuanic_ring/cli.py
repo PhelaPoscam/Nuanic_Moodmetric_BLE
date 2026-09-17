@@ -11,6 +11,8 @@ from nuanic_ring import (
     MODE_RAW_EDA,
     MODE_RESEARCH,
     MODE_STANDBY,
+    MOODMETRIC_PROFILE,
+    NUANIC_PROFILE,
     NuanicConnector,
 )
 from nuanic_ring.discover_services import run_diagnostics
@@ -56,20 +58,8 @@ def _check_dependency(module_name: str, extra: str = "cli") -> bool:
 
 
 def _parse_ring_addresses(ring_addr: str, ring_addrs: str) -> List[str]:
-    addresses = []
-    if ring_addr:
-        addresses.append(ring_addr.strip())
-    if ring_addrs:
-        addresses.extend([a.strip() for a in ring_addrs.split(",") if a.strip()])
-
-    dedup = []
-    seen = set()
-    for addr in addresses:
-        key = addr.upper()
-        if key not in seen:
-            seen.add(key)
-            dedup.append(key)
-    return dedup
+    candidates = [ring_addr or "", *(ring_addrs or "").split(",")]
+    return list(dict.fromkeys(a.strip().upper() for a in candidates if a.strip()))
 
 
 def _build_marker_hotkeys(specs: List[str]) -> Dict[str, str]:
@@ -95,7 +85,7 @@ def _format_marker_legend(hotkeys: Dict[str, str]) -> str:
     return " | ".join(f"{k}={hotkeys[k]}" for k in sorted(hotkeys))
 
 
-def _build_dashboard_table(
+def _build_dashboard_renderable(
     rows: List[Dict[str, Any]],
     elapsed_seconds: float,
     box_style: Any = None,
@@ -136,27 +126,6 @@ def _build_dashboard_table(
             r["imu_xyz"],
         )
     return table
-
-
-def _build_dashboard_renderable(
-    rows: List[Dict[str, Any]],
-    elapsed_seconds: float,
-    box_style: Any = None,
-    marker_legend: str = "",
-) -> Any:
-    from rich.console import Group
-    from rich.text import Text
-
-    table = _build_dashboard_table(
-        rows,
-        elapsed_seconds,
-        box_style=box_style,
-        marker_legend=marker_legend,
-    )
-    if not marker_legend:
-        return table
-
-    return Group(Text(f"Marker keys: {marker_legend}", style="dim"), table)
 
 
 def _parse_marker_label(raw_line: str) -> str | None:
@@ -263,13 +232,8 @@ def build_parser() -> argparse.ArgumentParser:
     log_group.add_argument("--no-log", dest="enable_logging", action="store_false")
 
     parser.add_argument(
-        "--csv-layout", choices=["combined", "split", "both"], default="combined"
-    )
-    parser.add_argument(
         "--nuanic-export", action="store_true", help="Output CSV in exact Nuanic format"
     )
-    parser.add_argument("--imu-refresh", type=int, default=5)
-    parser.add_argument("--no-clear", action="store_true")
     parser.add_argument("--ring-addr", default=None)
     parser.add_argument("--ring-addrs", default=None)
     parser.add_argument("--monitor-all", action="store_true")
@@ -300,12 +264,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Apply signal conditioner (median + Butterworth lowpass) to EDA stream. Off by default.",
     )
-    parser.add_argument(
-        "--raw",
-        action="store_true",
-        default=False,
-        help="(Deprecated) Alias for default no-filter behavior. Ignored.",
-    )
     parser.add_argument("--list-rings", action="store_true")
     parser.add_argument("--discover", action="store_true")
     parser.add_argument(
@@ -318,6 +276,45 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="[with --discover --subscribe-streams] Duration in seconds (default: until Ctrl+C)",
+    )
+    parser.add_argument(
+        "--ring-profile",
+        choices=["auto", NUANIC_PROFILE, MOODMETRIC_PROFILE],
+        default="auto",
+        help="[with --discover] Notify set to use (default: auto-detect from services)",
+    )
+    parser.add_argument(
+        "--profile-seconds",
+        type=int,
+        default=15,
+        help="[with --discover] Notify profiling duration (default: 15)",
+    )
+    parser.add_argument(
+        "--no-profile",
+        action="store_true",
+        help="[with --discover] Skip notify profiling",
+    )
+    parser.add_argument(
+        "--only-stream-chars",
+        action="store_true",
+        help="[with --discover] Show only Notify/Indicate characteristics",
+    )
+    parser.add_argument(
+        "--buffer-only",
+        action="store_true",
+        help="[with --discover] Only inspect the storage buffer",
+    )
+    parser.add_argument(
+        "--buffer-poll",
+        type=int,
+        default=1,
+        help="[with --discover] Read the buffer characteristic N times (default: 1)",
+    )
+    parser.add_argument(
+        "--buffer-interval",
+        type=float,
+        default=2.0,
+        help="[with --discover] Seconds between buffer reads (default: 2.0)",
     )
     parser.add_argument("--scan-timeout", type=float, default=6.0)
     parser.add_argument("--scan-attempts", type=int, default=3)
@@ -456,7 +453,7 @@ def ring_monitor() -> int:
                 enable_logging=args.enable_logging,
                 log_dir=args.log_dir,
                 participant_id=args.participant_id,
-                csv_layout=args.csv_layout,
+                csv_layout="nuanic" if args.nuanic_export else "combined",
                 initial_mode=_MODE_MAP[args.mode],
             )
         return asyncio.run(_run_monitor_cli(args))
@@ -465,8 +462,12 @@ def ring_monitor() -> int:
         return 0
 
 
-def _cap_multi_ring_hz(console: Any, args: argparse.Namespace) -> None:
-    """Warn or cap target_hz for multi-ring sessions (hardware unstable above ~16 Hz)."""
+def _warn_multi_ring_hz(console: Any, args: argparse.Namespace) -> None:
+    """Surface the monitor's multi-ring Hz cap on the console (ADR-003).
+
+    The cap itself lives in ``NuanicMonitor._apply_multi_ring_hz_cap``; the CLI
+    only echoes it, because nothing here configures logging.
+    """
     is_multi = (
         args.monitor_all
         or len(_parse_ring_addresses(args.ring_addr, args.ring_addrs)) > 1
@@ -481,7 +482,6 @@ def _cap_multi_ring_hz(console: Any, args: argparse.Namespace) -> None:
         console.print(
             f"\n[bold yellow]STABILITY WARNING:[/bold yellow] Capping {args.target_hz} Hz -> 16 Hz.\n"
         )
-        args.target_hz = 16
 
 
 def _sanitize_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -514,7 +514,7 @@ async def _run_dashboard(
 
     try:
         with Live(
-            console=console, refresh_per_second=int(1 / refresh_interval)
+            console=console, refresh_per_second=max(1, int(1 / refresh_interval))
         ) as live:
             while True:
                 elapsed = asyncio.get_event_loop().time() - started_at
@@ -554,7 +554,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         box_style = box.ASCII
 
     target_addresses = _parse_ring_addresses(args.ring_addr, args.ring_addrs)
-    _cap_multi_ring_hz(console, args)
+    _warn_multi_ring_hz(console, args)
 
     if args.discover:
         connector = NuanicConnector(target_address=args.ring_addr)
@@ -566,6 +566,13 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
                 connector.client,
                 subscribe_streams=args.subscribe_streams,
                 listen_seconds=args.listen_seconds,
+                ring_profile=args.ring_profile,
+                buffer_only=args.buffer_only,
+                buffer_poll=args.buffer_poll,
+                buffer_interval=args.buffer_interval,
+                only_stream_chars=args.only_stream_chars,
+                no_profile=args.no_profile,
+                profile_seconds=args.profile_seconds,
             )
         finally:
             await connector.disconnect()
@@ -580,12 +587,9 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
     ):
         return await _run_maintenance_commands(args, console)
 
-    if args.nuanic_export:
-        args.csv_layout = "nuanic"
-
     if args.list_rings:
         connector = NuanicConnector()
-        rings = await connector.list_available_rings_with_paired(
+        rings = await connector.scanner.list_available_rings_with_paired(
             scan_timeout=args.scan_timeout, attempts=args.scan_attempts
         )
         if not rings:
@@ -602,10 +606,8 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
 
     monitor = NuanicMonitor(
         log_dir=args.log_dir,
-        imu_refresh_packets=args.imu_refresh,
-        clear_console=not args.no_clear,
         enable_logging=args.enable_logging,
-        csv_layout=args.csv_layout,
+        csv_layout="nuanic" if args.nuanic_export else "combined",
         target_hz=args.target_hz,
         equalize_mode=args.equalize_mode,
         attempt_ring_rate_control=(args.rate_control == "yes"),

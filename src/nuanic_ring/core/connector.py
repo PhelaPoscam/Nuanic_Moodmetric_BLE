@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
-import platform
 import struct
 import subprocess
 import time
@@ -98,79 +96,12 @@ class NuanicConnector:
         self._disconnect_events: Dict[str, asyncio.Event] = {}
         self._disconnect_events_lock = asyncio.Lock()
 
-        # Delegate scanning to a dedicated scanner.
-        self._scanner = RingScanner(
+        # RingScanner owns all scanning; callers use connector.scanner.
+        self.scanner = RingScanner(
             timeout=timeout,
             max_scan_attempts=max_scan_attempts,
             target_address=target_address,
             pair_on_connect=pair_on_connect,
-        )
-
-    # ------------------------------------------------------------------
-    # Delegated scanning methods
-    # ------------------------------------------------------------------
-
-    async def _reset_bluetooth_radio(self) -> bool:
-        """Delegate to module-level radio reset."""
-        return await _reset_bluetooth_radio()
-
-    async def find_device(self):
-        """Scan for Nuanic ring (delegated to ``RingScanner``)."""
-        device = await self._scanner.find_device()
-        self.device = device
-        return device
-
-    async def list_available_rings(
-        self,
-        include_device: bool = False,
-        scan_timeout: float = 6.0,
-        attempts: int = 3,
-        retry_delay: float = 1.0,
-        stop_if_found: bool = True,
-        silent: bool = False,
-    ):
-        """Scan and return list of all available Nuanic rings."""
-        return await self._scanner.list_available_rings(
-            include_device=include_device,
-            scan_timeout=scan_timeout,
-            attempts=attempts,
-            retry_delay=retry_delay,
-            stop_if_found=stop_if_found,
-            silent=silent,
-        )
-
-    async def list_available_rings_with_paired(
-        self,
-        scan_timeout: float = 6.0,
-        attempts: int = 3,
-        stop_if_found: bool = True,
-        silent: bool = False,
-    ):
-        """Return discoverable rings plus Windows paired rings (if any)."""
-        return await self._scanner.list_available_rings_with_paired(
-            scan_timeout=scan_timeout,
-            attempts=attempts,
-            stop_if_found=stop_if_found,
-            silent=silent,
-        )
-
-    async def discover_all_matching_rings(
-        self,
-        include_device: bool = True,
-        scan_timeout: float = 6.0,
-        attempts: int = 3,
-        retry_delay: float = 0.5,
-        stop_if_found: bool = True,
-        silent: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """Discover all visible Nuanic/Moodmetric rings."""
-        return await self._scanner.discover_all_matching_rings(
-            include_device=include_device,
-            scan_timeout=scan_timeout,
-            attempts=attempts,
-            retry_delay=retry_delay,
-            stop_if_found=stop_if_found,
-            silent=silent,
         )
 
     async def select_ring_interactive(self):
@@ -179,7 +110,7 @@ class NuanicConnector:
         print("RING SELECTION")
         print("=" * 60)
 
-        rings = await self._scanner.list_available_rings_with_paired()
+        rings = await self.scanner.list_available_rings_with_paired()
 
         if not rings:
             print("[!] No Nuanic rings found.")
@@ -189,7 +120,7 @@ class NuanicConnector:
             reset_ok = await _reset_bluetooth_radio()
             if reset_ok:
                 print("[BT-RESET] Rescanning after radio reset...")
-                rings = await self._scanner.list_available_rings_with_paired()
+                rings = await self.scanner.list_available_rings_with_paired()
 
             if not rings:
                 cached = _load_last_address()
@@ -264,23 +195,13 @@ class NuanicConnector:
         return _cb
 
     def _create_bleak_client(self, target, disconnected_callback=None):
-        """Create BleakClient with robust Windows-friendly arguments."""
-        kwargs = {
-            "timeout": self._scanner.timeout,
-            "disconnected_callback": disconnected_callback,
-        }
-
-        if platform.system() == "Windows":
-            kwargs["use_cached_services"] = False
-
-        try:
-            params = inspect.signature(BleakClient).parameters
-            if "pair" in params:
-                kwargs["pair"] = self.pair_on_connect
-        except Exception:
-            pass
-
-        return BleakClient(target, **kwargs)
+        """Create BleakClient. ``pair=`` makes bleak pair during ``connect()``."""
+        return BleakClient(
+            target,
+            timeout=self.scanner.timeout,
+            disconnected_callback=disconnected_callback,
+            pair=self.pair_on_connect,
+        )
 
     async def _cleanup_client(self, address: Optional[str] = None):
         """Strict cleanup of existing BLE client state to prevent zombie connections."""
@@ -355,11 +276,6 @@ class NuanicConnector:
         except Exception:
             pass
 
-        try:
-            target_client.set_disconnected_callback(None)  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
         if not address:
             self.client = None
         else:
@@ -373,11 +289,6 @@ class NuanicConnector:
             if not selected:
                 print("[FAIL] No ring selected\n")
                 return False
-        if not self.device:
-            try:
-                self.device = await self.find_device()
-            except Exception:
-                pass
         return await self.connect_device(self.target_address, device=self.device)
 
     async def _get_or_create_disconnect_event(self, address: str) -> asyncio.Event:
@@ -393,14 +304,11 @@ class NuanicConnector:
     async def connect_device(self, address: str, device: Any = None) -> bool:
         """Connect one device and register it in the multi-device registry."""
         address = address.upper()
-        event = await self._get_or_create_disconnect_event(address)
+        await self._get_or_create_disconnect_event(address)
 
-        if device is None and platform.system() == "Windows":
+        if device is None:
             try:
-                old_target = self._scanner.target_address
-                self._scanner.target_address = address
-                device = await self._scanner.find_device()
-                self._scanner.target_address = old_target
+                device = await self.scanner.find_device(address=address)
             except Exception:
                 pass
 
@@ -415,12 +323,6 @@ class NuanicConnector:
                 await client.connect()
                 if not getattr(client, "is_connected", False):
                     raise RuntimeError("connection not established")
-
-                if not self.pair_on_connect:
-                    try:
-                        await client.pair()
-                    except Exception:
-                        pass
 
                 await self._register_connected_device(address, client, device)
 
@@ -484,7 +386,7 @@ class NuanicConnector:
     ) -> Dict[str, bool]:
         """Connect to many rings with staggered timing."""
         results = {}
-        discovered = await self.discover_all_matching_rings(
+        discovered = await self.scanner.discover_all_matching_rings(
             include_device=True,
             scan_timeout=scan_timeout,
             attempts=scan_attempts,
@@ -603,21 +505,6 @@ class NuanicConnector:
         except Exception as e:
             print(f"[FAIL] Battery read error: {e}")
             return None
-
-    async def discover_services(self):
-        """Discover and print all services and characteristics."""
-        if not self.client or not self.client.is_connected:
-            print("[FAIL] Not connected to any device.")
-            return
-
-        print(f"\n[INFO] Discovering services for {self.device.name}...")
-        for service in self.client.services:
-            print(f"  [SERVICE] {service.uuid}: {service.description}")
-            for char in service.characteristics:
-                print(
-                    f"    [CHAR] {char.uuid}: {char.description}, Properties: {char.properties}"
-                )
-        print("[INFO] Service discovery complete.\n")
 
     # ------------------------------------------------------------------
     # Accessors
@@ -749,122 +636,6 @@ class NuanicConnector:
     async def unsubscribe_from_imu_motion(self, address: Optional[str] = None) -> None:
         """Unsubscribe from IMU motion data notifications."""
         await self._unsubscribe(self.IMU_BATCH_UUID, address)
-
-    # ------------------------------------------------------------------
-    # Legacy Deprecated Subscription Aliases (Backwards Compatibility)
-    # ------------------------------------------------------------------
-
-    async def subscribe_to_stress(
-        self,
-        callback: Callable[
-            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
-        ],
-        address: Optional[str] = None,
-    ) -> bool:
-        """Deprecated legacy alias for ``subscribe_to_live_dne``."""
-        import warnings
-
-        warnings.warn(
-            "subscribe_to_stress is deprecated; use subscribe_to_live_dne instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return await self.subscribe_to_live_dne(callback, address=address)
-
-    async def unsubscribe_from_stress(self, address: Optional[str] = None) -> None:
-        """Deprecated legacy alias for ``unsubscribe_from_live_dne``."""
-        import warnings
-
-        warnings.warn(
-            "unsubscribe_from_stress is deprecated; use unsubscribe_from_live_dne instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        await self.unsubscribe_from_live_dne(address=address)
-
-    async def subscribe_to_imu(
-        self,
-        callback: Callable[
-            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
-        ],
-        address: Optional[str] = None,
-    ) -> bool:
-        """Deprecated legacy alias for ``subscribe_to_imu_motion``."""
-        import warnings
-
-        warnings.warn(
-            "subscribe_to_imu is deprecated; use subscribe_to_imu_motion instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return await self.subscribe_to_imu_motion(callback, address=address)
-
-    async def unsubscribe_from_imu(self, address: Optional[str] = None) -> None:
-        """Deprecated legacy alias for ``unsubscribe_from_imu_motion``."""
-        import warnings
-
-        warnings.warn(
-            "unsubscribe_from_imu is deprecated; use unsubscribe_from_imu_motion instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        await self.unsubscribe_from_imu_motion(address=address)
-
-    async def subscribe_to_raw_eda(
-        self,
-        callback: Callable[
-            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
-        ],
-        address: Optional[str] = None,
-    ) -> bool:
-        """Deprecated legacy alias for ``subscribe_to_finger_state``."""
-        import warnings
-
-        warnings.warn(
-            "subscribe_to_raw_eda is deprecated; use subscribe_to_finger_state instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return await self.subscribe_to_finger_state(callback, address=address)
-
-    async def unsubscribe_from_raw_eda(self, address: Optional[str] = None) -> None:
-        """Deprecated legacy alias for ``unsubscribe_from_finger_state``."""
-        import warnings
-
-        warnings.warn(
-            "unsubscribe_from_raw_eda is deprecated; use unsubscribe_from_finger_state instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        await self.unsubscribe_from_finger_state(address=address)
-
-    async def subscribe_to_live_eda(
-        self,
-        callback: Callable[
-            [BleakGATTCharacteristic, bytearray], Union[Awaitable[None], None]
-        ],
-        address: Optional[str] = None,
-    ) -> bool:
-        """Deprecated legacy alias for ``subscribe_to_raw_eda_ohms``."""
-        import warnings
-
-        warnings.warn(
-            "subscribe_to_live_eda is deprecated; use subscribe_to_raw_eda_ohms instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return await self.subscribe_to_raw_eda_ohms(callback, address=address)
-
-    async def unsubscribe_from_live_eda(self, address: Optional[str] = None) -> None:
-        """Deprecated legacy alias for ``unsubscribe_from_raw_eda_ohms``."""
-        import warnings
-
-        warnings.warn(
-            "unsubscribe_from_live_eda is deprecated; use unsubscribe_from_raw_eda_ohms instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        await self.unsubscribe_from_raw_eda_ohms(address=address)
 
     async def attempt_set_sample_rate(
         self,
@@ -1074,7 +845,14 @@ class NuanicConnector:
     ) -> Optional[Dict[str, Any]]:
         """Parse one fixed-size record from the offline flash buffer."""
         if format_type == 1:
-            boot_count, timestamp_ms, eda_ohm = struct.unpack("<HQI", record_data)
+            if len(record_data) < 14:
+                return None
+            try:
+                boot_count, timestamp_ms, eda_ohm = struct.unpack(
+                    "<HQI", record_data[:14]
+                )
+            except struct.error:
+                return None
             return {
                 "format": "EDA",
                 "boot_count": boot_count,
@@ -1084,9 +862,14 @@ class NuanicConnector:
                 "conductance_us": ((1000000.0 / eda_ohm) if eda_ohm > 0 else 0.0),
             }
         if format_type == 2:
-            boot_count, timestamp_ms, srrn, srl, dne = struct.unpack(
-                "<HQiii", record_data
-            )
+            if len(record_data) < 22:
+                return None
+            try:
+                boot_count, timestamp_ms, srrn, srl, dne = struct.unpack(
+                    "<HQiii", record_data[:22]
+                )
+            except struct.error:
+                return None
             return {
                 "format": "DNE",
                 "boot_count": boot_count,

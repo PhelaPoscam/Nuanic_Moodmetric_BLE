@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from statistics import fmean
+from typing import Dict, Optional
 
 from nuanic_ring.telemetry.device_state import RingDeviceState
 
@@ -14,27 +15,17 @@ def update_observed_hz(
     now: datetime,
 ) -> None:
     """Calculate moving average observed Hz for D306 or IMU stream."""
-    if stream_name == "d306":
-        last = state.last_d306_ts
-        if last is not None:
-            dt = (now - last).total_seconds()
-            if dt > 0:
-                state.d306_intervals.append(dt)
-                mean_dt = sum(state.d306_intervals) / len(state.d306_intervals)
-                if mean_dt > 0:
-                    state.d306_observed_hz = 1.0 / mean_dt
-        state.last_d306_ts = now
-        return
-
-    last = state.last_imu_ts
+    stream = "d306" if stream_name == "d306" else "imu"
+    last = getattr(state, f"last_{stream}_ts")
     if last is not None:
         dt = (now - last).total_seconds()
         if dt > 0:
-            state.imu_intervals.append(dt)
-            mean_dt = sum(state.imu_intervals) / len(state.imu_intervals)
+            intervals = getattr(state, f"{stream}_intervals")
+            intervals.append(dt)
+            mean_dt = fmean(intervals)
             if mean_dt > 0:
-                state.imu_observed_hz = 1.0 / mean_dt
-    state.last_imu_ts = now
+                setattr(state, f"{stream}_observed_hz", 1.0 / mean_dt)
+    setattr(state, f"last_{stream}_ts", now)
 
 
 def equalize_decision(
@@ -42,7 +33,6 @@ def equalize_decision(
     stream_name: str,
     target_hz: Optional[float],
     equalize_mode: str = "off",
-    now: Optional[datetime] = None,
 ) -> bool:
     """Determine whether an incoming packet should be dropped to achieve target rate."""
     if equalize_mode == "off" or not target_hz:
@@ -57,11 +47,7 @@ def equalize_decision(
     if last_ts is None:
         return False
 
-    current_now = now or datetime.now()
-    current_dt = (current_now - last_ts).total_seconds()
-    should_drop = current_dt < target_dt
-
-    return should_drop
+    return (datetime.now() - last_ts).total_seconds() < target_dt
 
 
 def build_row_rate_tail(
@@ -69,13 +55,17 @@ def build_row_rate_tail(
     target_hz: Optional[float],
     equalize_mode: str,
     would_drop: bool,
-) -> List[str]:
-    """Format rate control diagnostics columns."""
-    return [
-        (f"{state.d306_observed_hz:.3f}" if state.d306_observed_hz > 0 else ""),
-        (f"{state.imu_observed_hz:.3f}" if state.imu_observed_hz > 0 else ""),
-        f"{target_hz:.2f}" if target_hz else "",
-        state.rate_control_status,
-        equalize_mode,
-        "1" if would_drop else "0",
-    ]
+) -> Dict[str, str]:
+    """Rate-control diagnostics columns, keyed by log-row field name."""
+    return {
+        "D306_Observed_Hz": (
+            f"{state.d306_observed_hz:.3f}" if state.d306_observed_hz > 0 else ""
+        ),
+        "IMU_Observed_Hz": (
+            f"{state.imu_observed_hz:.3f}" if state.imu_observed_hz > 0 else ""
+        ),
+        "Rate_Target_Hz": f"{target_hz:.2f}" if target_hz else "",
+        "Rate_Control_Status": state.rate_control_status,
+        "Equalize_Mode": equalize_mode,
+        "Equalize_WouldDrop": "1" if would_drop else "0",
+    }

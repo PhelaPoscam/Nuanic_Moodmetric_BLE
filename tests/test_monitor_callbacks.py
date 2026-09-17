@@ -32,30 +32,6 @@ class FakeConnector:
     async def disconnect(self, address=None):
         pass
 
-    async def subscribe_to_imu(self, callback, address=None):
-        return True
-
-    async def subscribe_to_stress(self, callback, address=None):
-        return True
-
-    async def subscribe_to_raw_eda(self, callback, address=None):
-        return True
-
-    async def subscribe_to_live_eda(self, callback, address=None):
-        return True
-
-    async def unsubscribe_from_imu(self, address=None):
-        pass
-
-    async def unsubscribe_from_stress(self, address=None):
-        pass
-
-    async def unsubscribe_from_raw_eda(self, address=None):
-        pass
-
-    async def unsubscribe_from_live_eda(self, address=None):
-        pass
-
     def get_client(self, address=None):
         return None
 

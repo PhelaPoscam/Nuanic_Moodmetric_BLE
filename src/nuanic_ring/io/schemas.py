@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass, field, fields
-from typing import Any, ClassVar, List, Optional, Tuple
+from dataclasses import dataclass, fields
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 # ==============================================================================
 # Packet Schemas (Binary GATT Payloads)
@@ -77,7 +77,7 @@ class ImuBatchPacket:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> Optional[ImuBatchPacket]:
-        if len(data) < 8:
+        if len(data) != 92:
             return None
 
         clock, context = struct.unpack("<II", data[:8])
@@ -129,8 +129,22 @@ class FingerStatePacket:
 # ==============================================================================
 
 
+class CsvLogRow:
+    """Shared CSV serialization for every log-row dataclass."""
+
+    # Every subclass is a @dataclass; this tells the type checker so.
+    __dataclass_fields__: ClassVar[Dict[str, Any]]
+
+    def to_csv_row(self) -> List[Any]:
+        return [getattr(self, f.name) for f in fields(self)]
+
+    @classmethod
+    def header(cls) -> List[str]:
+        return [f.name for f in fields(cls)]
+
+
 @dataclass(slots=True)
-class CombinedLogRow:
+class CombinedLogRow(CsvLogRow):
     """Schema for unified combined session log (all telemetry and computed signals)."""
 
     timestamp: str
@@ -153,16 +167,9 @@ class CombinedLogRow:
     Equalize_Mode: str = ""
     Equalize_WouldDrop: str = ""
 
-    def to_csv_row(self) -> List[Any]:
-        return [getattr(self, f.name) for f in fields(self)]
-
-    @classmethod
-    def header(cls) -> List[str]:
-        return [f.name for f in fields(cls)]
-
 
 @dataclass(slots=True)
-class StreamLogRow:
+class StreamLogRow(CsvLogRow):
     """Schema for _streamed.csv log."""
 
     timestamp: str
@@ -181,16 +188,9 @@ class StreamLogRow:
     marker_label: str = ""
     marker_source: str = ""
 
-    def to_csv_row(self) -> List[Any]:
-        return [getattr(self, f.name) for f in fields(self)]
-
-    @classmethod
-    def header(cls) -> List[str]:
-        return [f.name for f in fields(cls)]
-
 
 @dataclass(slots=True)
-class ComputedLogRow:
+class ComputedLogRow(CsvLogRow):
     """Schema for _computed.csv log."""
 
     timestamp: str
@@ -216,38 +216,25 @@ class ComputedLogRow:
     marker_label: str = ""
     marker_source: str = ""
 
-    def to_csv_row(self) -> List[Any]:
-        return [getattr(self, f.name) for f in fields(self)]
-
-    @classmethod
-    def header(cls) -> List[str]:
-        return [f.name for f in fields(cls)]
-
 
 @dataclass(slots=True)
-class ImuLogRow:
+class ImuLogRow(CsvLogRow):
     """Schema for _imu.csv log."""
 
     timestamp: str
     elapsed_ms: int
-    clock: int
-    context: int
+    # Blank on marker rows, int on sample rows.
+    clock: Any
+    context: Any
     motion_intensity: str
-    x: int
-    y: int
-    z: int
+    x: Any
+    y: Any
+    z: Any
     marker: str = ""
-
-    def to_csv_row(self) -> List[Any]:
-        return [getattr(self, f.name) for f in fields(self)]
-
-    @classmethod
-    def header(cls) -> List[str]:
-        return [f.name for f in fields(cls)]
 
 
 @dataclass(slots=True)
-class NuanicExportLogRow:
+class NuanicExportLogRow(CsvLogRow):
     """Schema for Nuanic Cloud compatible CSV export."""
 
     address: str
@@ -257,10 +244,3 @@ class NuanicExportLogRow:
     srl: Any
     srrn: Any
     eda: Any
-
-    def to_csv_row(self) -> List[Any]:
-        return [getattr(self, f.name) for f in fields(self)]
-
-    @classmethod
-    def header(cls) -> List[str]:
-        return [f.name for f in fields(cls)]

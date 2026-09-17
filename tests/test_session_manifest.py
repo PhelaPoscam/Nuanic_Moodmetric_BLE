@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nuanic_ring.manifest import (
+from nuanic_ring.io.manifest import (
     DeviceSessionStats,
     SessionConfiguration,
     SessionManifest,

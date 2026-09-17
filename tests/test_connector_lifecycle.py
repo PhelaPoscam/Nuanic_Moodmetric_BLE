@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from nuanic_ring.connector import NuanicConnector
+from nuanic_ring.core import connector as connector_module
+from nuanic_ring.core.connector import NuanicConnector
 
 
 class _BackendResource:
@@ -27,12 +28,10 @@ class FakeBleakClient:
         self.connect_calls = 0
         self.disconnect_calls = 0
         self.stop_notify_calls = []
-        self.paired = False
         self._backend = SimpleNamespace(
             _session=_BackendResource(),
             _device=_BackendResource(),
         )
-        self.disconnected_callback = None
 
     async def connect(self):
         self.connect_calls += 1
@@ -45,14 +44,8 @@ class FakeBleakClient:
         self.disconnect_calls += 1
         self.is_connected = False
 
-    async def pair(self):
-        self.paired = True
-
     async def stop_notify(self, char_uuid):
         self.stop_notify_calls.append(char_uuid)
-
-    def set_disconnected_callback(self, cb):
-        self.disconnected_callback = cb
 
 
 def _make_connector(**kwargs):
@@ -61,7 +54,7 @@ def _make_connector(**kwargs):
 
 
 def test_connect_device_success_registers_and_syncs():
-    conn = _make_connector(auto_sync_time=False)
+    conn = _make_connector(auto_sync_time=False, pair_on_connect=True)
     client = FakeBleakClient()
     conn._create_bleak_client = lambda *a, **k: client
 
@@ -71,6 +64,24 @@ def test_connect_device_success_registers_and_syncs():
     assert "AA:BB:CC:DD:EE:01" in conn.clients
     assert conn.client is client
     assert conn.target_address == "AA:BB:CC:DD:EE:01"
+
+
+def test_create_bleak_client_delegates_pairing_to_bleak(monkeypatch):
+    """bleak pairs during connect() via ``pair=``; we must not pair twice."""
+    captured = {}
+
+    class _RecordingBleakClient:
+        def __init__(self, target, **kwargs):
+            captured.clear()
+            captured.update(kwargs)
+
+    monkeypatch.setattr(connector_module, "BleakClient", _RecordingBleakClient)
+
+    _make_connector(pair_on_connect=True)._create_bleak_client("AA:BB:CC:DD:EE:01")
+    assert captured["pair"] is True
+
+    _make_connector(pair_on_connect=False)._create_bleak_client("AA:BB:CC:DD:EE:01")
+    assert captured["pair"] is False
 
 
 def test_connect_device_retries_then_fails():
@@ -111,7 +122,6 @@ def test_disconnect_one_cleans_registry():
     assert "AA:BB:CC:DD:EE:01" not in conn.clients
     assert "AA:BB:CC:DD:EE:01" not in conn.devices
     assert client.disconnect_calls == 1
-    assert client.set_disconnected_callback is None or True
 
 
 def test_disconnect_all_cleans_multiple():
@@ -158,10 +168,16 @@ def test_register_connected_device_sets_state():
 def test_stop_all_notifications_best_effort():
     conn = _make_connector()
     client = FakeBleakClient()
+    stopped = []
 
-    async def _boom(_uuid):
+    async def _boom(uuid):
+        stopped.append(uuid)
         raise OSError("notify failed")
 
     client.stop_notify = _boom
     asyncio.run(conn._stop_all_notifications(client))
-    # No exception raised -> best-effort semantics hold
+    assert len(stopped) == 4
+    assert conn.LIVE_DNE_UUID in stopped
+    assert conn.IMU_BATCH_UUID in stopped
+    assert conn.STATE_UUID in stopped
+    assert conn.LIVE_EDA_UUID in stopped

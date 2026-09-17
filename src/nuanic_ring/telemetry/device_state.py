@@ -75,7 +75,6 @@ class RingDeviceState:
     imu_log_queue: Optional[asyncio.Queue[List[Any]]] = None
     imu_writer_task: Optional[asyncio.Task[None]] = None
     dropped_rows: int = 0
-    marker_count: int = 0
 
     # Reconnect bookkeeping
     reconnect_attempt: int = 0
@@ -97,5 +96,4 @@ class RingDeviceState:
     d306_intervals: Deque[float] = field(default_factory=lambda: deque(maxlen=128))
     imu_intervals: Deque[float] = field(default_factory=lambda: deque(maxlen=128))
     rate_control_status: str = "not-attempted"
-    rate_control_detail: str = ""
     heartbeat_tick: bool = False

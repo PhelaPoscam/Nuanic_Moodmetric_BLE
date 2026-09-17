@@ -21,7 +21,7 @@ Recent diagnostics confirmed two distinct BLE profiles can appear in local workf
 
 Practical command for ring-type validation:
 ```bash
-nuanic-ring-discover --no-profile --buffer-poll 0
+nuanic-ring-monitor --discover --no-profile --buffer-poll 0
 ```
 
 ## Update (2026-03-16): Moodmetric Notify Stream Breakdown

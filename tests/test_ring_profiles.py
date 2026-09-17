@@ -1,4 +1,4 @@
-from nuanic_ring.ring_profiles import (
+from nuanic_ring.core.profiles import (
     MOODMETRIC_PROFILE,
     NUANIC_PROFILE,
     UNKNOWN_PROFILE,

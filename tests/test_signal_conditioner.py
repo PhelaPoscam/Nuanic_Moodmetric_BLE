@@ -1,4 +1,4 @@
-from nuanic_ring.signal_processing import SignalConditioner
+from nuanic_ring.dsp.signal_processing import SignalConditioner
 
 
 def test_signal_conditioner_initialization():

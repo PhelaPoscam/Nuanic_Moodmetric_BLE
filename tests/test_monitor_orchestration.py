@@ -11,6 +11,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from nuanic_ring.monitor import NuanicMonitor
 
 
+class FakeScanner:
+    """Stands in for ``NuanicConnector.scanner``."""
+
+    def __init__(self, owner):
+        self._owner = owner
+
+    async def discover_all_matching_rings(
+        self,
+        include_device=True,
+        scan_timeout=6.0,
+        attempts=3,
+        retry_delay=0.5,
+        stop_if_found=True,
+    ):
+        self._owner.last_scan_timeout = scan_timeout
+        self._owner.last_scan_attempts = attempts
+        return self._owner.discovered
+
+
 class FakeConnector:
     """Minimal connector double with the surface start_multi touches."""
 
@@ -19,9 +38,9 @@ class FakeConnector:
         self.connected = False
         self.discovered = []
         self.connect_calls = 0
-        self.reset_calls = 0
         self.last_scan_timeout = None
         self.last_scan_attempts = None
+        self.scanner = FakeScanner(self)
 
     # -- connect / single path --
     async def connect(self):
@@ -32,22 +51,6 @@ class FakeConnector:
 
     async def read_battery(self, address=None):
         return 80
-
-    async def _reset_bluetooth_radio(self):
-        self.reset_calls += 1
-        return True
-
-    async def discover_all_matching_rings(
-        self,
-        include_device=True,
-        scan_timeout=6.0,
-        attempts=3,
-        retry_delay=0.5,
-        stop_if_found=True,
-    ):
-        self.last_scan_timeout = scan_timeout
-        self.last_scan_attempts = attempts
-        return self.discovered
 
     async def connect_device(self, address, device=None):
         self.connected = True
@@ -71,18 +74,6 @@ class FakeConnector:
     async def subscribe_to_raw_eda_ohms(self, callback, address=None):
         return True
 
-    async def subscribe_to_imu(self, callback, address=None):
-        return True
-
-    async def subscribe_to_stress(self, callback, address=None):
-        return True
-
-    async def subscribe_to_raw_eda(self, callback, address=None):
-        return True
-
-    async def subscribe_to_live_eda(self, callback, address=None):
-        return True
-
     async def unsubscribe_from_imu_motion(self, address=None):
         pass
 
@@ -93,18 +84,6 @@ class FakeConnector:
         pass
 
     async def unsubscribe_from_raw_eda_ohms(self, address=None):
-        pass
-
-    async def unsubscribe_from_imu(self, address=None):
-        pass
-
-    async def unsubscribe_from_stress(self, address=None):
-        pass
-
-    async def unsubscribe_from_raw_eda(self, address=None):
-        pass
-
-    async def unsubscribe_from_live_eda(self, address=None):
         pass
 
     def get_client(self, address=None):
@@ -239,6 +218,12 @@ def test_warmup_sequence_runs_when_enabled():
 
 def test_drain_writers_handles_none_tasks():
     monitor = _make_monitor()
-    monitor._ensure_device_state("AA:BB:CC:DD:EE:01")
+    state = monitor._ensure_device_state("AA:BB:CC:DD:EE:01")
+    assert state.writer_task is None
+    assert state.stream_writer_task is None
+    assert state.computed_writer_task is None
+    assert state.imu_writer_task is None
     asyncio.run(monitor._drain_writers_and_report())
-    # No writer tasks (logging disabled) -> no exception
+    # Verify tasks remain None and no unhandled error occurred
+    assert state.writer_task is None
+    assert state.stream_writer_task is None

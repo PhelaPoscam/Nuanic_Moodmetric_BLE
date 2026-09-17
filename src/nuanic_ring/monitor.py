@@ -8,19 +8,17 @@ import logging
 import platform
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from nuanic_ring.core.connector import NuanicConnector
+from nuanic_ring.core.scanner import _reset_bluetooth_radio as reset_bluetooth_radio
 from nuanic_ring.dsp.signal_processing import SignalConditioner
-from nuanic_ring.io.manifest import generate_session_manifest
+from nuanic_ring.io.manifest import MANIFEST_FILENAME, generate_session_manifest
 from nuanic_ring.io.schemas import (
     CombinedLogRow,
     ComputedLogRow,
-    D306Packet,
-    FingerStatePacket,
-    ImuBatchPacket,
+    CsvLogRow,
     ImuLogRow,
-    LiveEdaPacket,
     NuanicExportLogRow,
     StreamLogRow,
 )
@@ -53,8 +51,6 @@ class NuanicMonitor:
     def __init__(
         self,
         log_dir: str = "data/ring_logs",
-        imu_refresh_packets: int = 5,
-        clear_console: bool = True,
         enable_logging: bool = True,
         csv_layout: str = "combined",
         target_hz: Optional[float] = None,
@@ -69,8 +65,6 @@ class NuanicMonitor:
         force_hz: bool = False,
     ) -> None:
         self.log_dir = Path(log_dir)
-        self.imu_refresh_packets = imu_refresh_packets
-        self.clear_console = clear_console
         self.enable_logging = enable_logging
         self.csv_layout = csv_layout
         self.target_hz = target_hz
@@ -169,65 +163,57 @@ class NuanicMonitor:
             writer.close()
             return None
 
+    # (file suffix, row class, queue attr, file attr, writer-task attr)
+    _LOG_KINDS: Dict[str, Tuple[str, Type[CsvLogRow], str, str, str]] = {
+        "combined": ("", CombinedLogRow, "log_queue", "log_file", "writer_task"),
+        "stream": (
+            "streamed",
+            StreamLogRow,
+            "stream_log_queue",
+            "stream_log_file",
+            "stream_writer_task",
+        ),
+        "computed": (
+            "computed",
+            ComputedLogRow,
+            "computed_log_queue",
+            "computed_log_file",
+            "computed_writer_task",
+        ),
+        "imu": ("imu", ImuLogRow, "imu_log_queue", "imu_log_file", "imu_writer_task"),
+    }
+
+    def _init_log(self, state: RingDeviceState, kind: str) -> None:
+        """Open the CSV file and start the writer task for one log kind."""
+        suffix, row_cls, queue_attr, file_attr, task_attr = self._LOG_KINDS[kind]
+        queue = getattr(state, queue_attr)
+        if not queue or (getattr(state, file_attr) and getattr(state, task_attr)):
+            return
+
+        if kind == "combined" and self.csv_layout == "nuanic":
+            header = NuanicExportLogRow.header()
+        else:
+            header = row_cls.header()
+
+        if not getattr(state, file_attr):
+            setattr(state, file_attr, self._open_log_file(state, suffix, header))
+
+        log_file = getattr(state, file_attr)
+        if log_file:
+            setattr(state, task_attr, self._start_writer(state, queue, log_file))
+
     def _initialize_log_file(self, state: RingDeviceState) -> None:
         """Initialize unified combined CSV log file."""
-        if not state.log_queue or (state.log_file and state.writer_task):
-            return
-        header = (
-            NuanicExportLogRow.header()
-            if self.csv_layout == "nuanic"
-            else CombinedLogRow.header()
-        )
-        if not state.log_file:
-            state.log_file = self._open_log_file(state, "", header)
-        if state.log_file and state.log_queue:
-            state.writer_task = self._start_writer(
-                state, state.log_queue, state.log_file
-            )
+        self._init_log(state, "combined")
 
     def _initialize_split_log_files(self, state: RingDeviceState) -> None:
         """Initialize split raw-stream and computed CSV log files."""
-        if not state.stream_log_queue or not state.computed_log_queue:
-            return
-        if (
-            state.stream_log_file
-            and state.computed_log_file
-            and (state.stream_writer_task and state.computed_writer_task)
-        ):
-            return
-        self._initialize_split_log_files_helper(state)
-
-    def _initialize_split_log_files_helper(self, state: RingDeviceState) -> None:
-        stream_header = StreamLogRow.header()
-        computed_header = ComputedLogRow.header()
-        if not state.stream_log_file:
-            state.stream_log_file = self._open_log_file(
-                state, "streamed", stream_header
-            )
-        if state.stream_log_file and state.stream_log_queue:
-            state.stream_writer_task = self._start_writer(
-                state, state.stream_log_queue, state.stream_log_file
-            )
-        if not state.computed_log_file:
-            state.computed_log_file = self._open_log_file(
-                state, "computed", computed_header
-            )
-        if state.computed_log_file and state.computed_log_queue:
-            state.computed_writer_task = self._start_writer(
-                state, state.computed_log_queue, state.computed_log_file
-            )
+        self._init_log(state, "stream")
+        self._init_log(state, "computed")
 
     def _initialize_imu_log_file(self, state: RingDeviceState) -> None:
         """Initialize dedicated IMU CSV log file."""
-        if not state.imu_log_queue or (state.imu_log_file and state.imu_writer_task):
-            return
-        header = ImuLogRow.header()
-        if not state.imu_log_file:
-            state.imu_log_file = self._open_log_file(state, "imu", header)
-        if state.imu_log_file and state.imu_log_queue:
-            state.imu_writer_task = self._start_writer(
-                state, state.imu_log_queue, state.imu_log_file
-            )
+        self._init_log(state, "imu")
 
     async def _csv_writer_loop(
         self,
@@ -241,92 +227,32 @@ class NuanicMonitor:
             log_file=log_file,
         )
 
-    def _enqueue_to(
-        self,
-        state: RingDeviceState,
-        queue: Optional[asyncio.Queue[List[Any]]],
-        row: List[Any],
-        file_ready: bool,
-        initializer: Callable[[RingDeviceState], None],
-    ) -> None:
+    def _enqueue(self, state: RingDeviceState, kind: str, row: List[Any]) -> None:
         """Guard, lazy-init, and enqueue a CSV row; record drops if full."""
-        if not self.enable_logging or not queue:
+        if not self.enable_logging:
             return
-        if not file_ready:
-            initializer(state)
+        _, _, queue_attr, file_attr, _ = self._LOG_KINDS[kind]
+        queue = getattr(state, queue_attr)
+        if not queue:
+            return
+        if not getattr(state, file_attr):
+            self._init_log(state, kind)
         try:
             queue.put_nowait(row)
         except asyncio.QueueFull:
             state.dropped_rows += 1
 
     def _enqueue_log(self, state: RingDeviceState, row: List[Any]) -> None:
-        self._enqueue_to(
-            state,
-            state.log_queue,
-            row,
-            file_ready=bool(state.log_file),
-            initializer=self._initialize_log_file,
-        )
+        self._enqueue(state, "combined", row)
 
     def _enqueue_stream_log(self, state: RingDeviceState, row: List[Any]) -> None:
-        self._enqueue_to(
-            state,
-            state.stream_log_queue,
-            row,
-            file_ready=bool(state.stream_log_file and state.computed_log_file),
-            initializer=self._initialize_split_log_files,
-        )
+        self._enqueue(state, "stream", row)
 
     def _enqueue_computed_log(self, state: RingDeviceState, row: List[Any]) -> None:
-        self._enqueue_to(
-            state,
-            state.computed_log_queue,
-            row,
-            file_ready=bool(state.stream_log_file and state.computed_log_file),
-            initializer=self._initialize_split_log_files,
-        )
+        self._enqueue(state, "computed", row)
 
     def _enqueue_imu_log(self, state: RingDeviceState, row: List[Any]) -> None:
-        self._enqueue_to(
-            state,
-            state.imu_log_queue,
-            row,
-            file_ready=bool(state.imu_log_file),
-            initializer=self._initialize_imu_log_file,
-        )
-
-    def _base_row(
-        self,
-        state: RingDeviceState,
-        data_type: str,
-        custom_ts: Optional[datetime] = None,
-        custom_elapsed: Optional[int] = None,
-    ) -> List[Any]:
-        if custom_ts is not None:
-            timestamp = custom_ts.isoformat(timespec="milliseconds")
-        else:
-            timestamp = datetime.now().isoformat(timespec="milliseconds")
-
-        if custom_elapsed is not None:
-            elapsed_ms = custom_elapsed
-        else:
-            elapsed_ms = int(self._elapsed_seconds() * 1000)
-
-        return [
-            timestamp,
-            elapsed_ms,
-            state.mac,
-            state.status,
-            data_type,
-        ]
-
-    def _update_observed_hz(
-        self,
-        state: RingDeviceState,
-        stream_name: str,
-        now: datetime,
-    ) -> None:
-        update_observed_hz(state, stream_name, now)
+        self._enqueue(state, "imu", row)
 
     def _equalize_decision(
         self,
@@ -344,7 +270,7 @@ class NuanicMonitor:
         self,
         state: RingDeviceState,
         would_drop: bool,
-    ) -> List[Any]:
+    ) -> Dict[str, str]:
         return build_row_rate_tail(
             state,
             target_hz=self.target_hz,
@@ -377,12 +303,7 @@ class NuanicMonitor:
                     connection_state=state.status,
                     data_type="MARKER",
                     decoded_fields=marker_payload,
-                    D306_Observed_Hz=rate_tail[0],
-                    IMU_Observed_Hz=rate_tail[1],
-                    Rate_Target_Hz=rate_tail[2],
-                    Rate_Control_Status=rate_tail[3],
-                    Equalize_Mode=rate_tail[4],
-                    Equalize_WouldDrop=rate_tail[5],
+                    **rate_tail,
                 ).to_csv_row()
                 self._enqueue_log(state, row)
 
@@ -402,12 +323,7 @@ class NuanicMonitor:
                 device_mac=state.mac,
                 connection_state=state.status,
                 data_type="MARKER",
-                D306_Observed_Hz=rate_tail[0],
-                IMU_Observed_Hz=rate_tail[1],
-                Rate_Target_Hz=rate_tail[2],
-                Rate_Control_Status=rate_tail[3],
-                Equalize_Mode=rate_tail[4],
-                Equalize_WouldDrop=rate_tail[5],
+                **rate_tail,
                 marker_label=clean_label,
                 marker_source=source,
             ).to_csv_row()
@@ -418,23 +334,16 @@ class NuanicMonitor:
             imu_marker = ImuLogRow(
                 timestamp=ts_iso,
                 elapsed_ms=elapsed_ms,
-                clock=0,
-                context=0,
+                clock="",
+                context="",
                 motion_intensity="",
-                x=0,
-                y=0,
-                z=0,
+                x="",
+                y="",
+                z="",
                 marker=marker_payload,
             ).to_csv_row()
-            # Replace placeholder zeros with empty string for marker row
-            imu_marker[2] = ""
-            imu_marker[3] = ""
-            imu_marker[5] = ""
-            imu_marker[6] = ""
-            imu_marker[7] = ""
             self._enqueue_imu_log(state, imu_marker)
 
-            state.marker_count += 1
             inserted += 1
 
         return inserted
@@ -454,7 +363,7 @@ class NuanicMonitor:
 
                 now = datetime.now()
                 state.last_seen = now
-                self._update_observed_hz(state, "d306", now)
+                update_observed_hz(state, "d306", now)
                 would_drop = self._equalize_decision(state, "d306")
 
                 if would_drop and self.equalize_mode == "enforce":
@@ -477,7 +386,6 @@ class NuanicMonitor:
                     if self.apply_filter
                     else conductance_us
                 )
-                freq, amp = 0.0, 0.0
                 state.raw_eda = eda_value
                 state.filtered_us = filtered_us
                 state.dne_stress_index = dne_stress_index
@@ -504,14 +412,13 @@ class NuanicMonitor:
                 if self.csv_layout == "nuanic":
                     ts_unix, ts_str = self._nuanic_ts_fields(smoothed_ts)
                     srl_ohms = int(1_000_000 / filtered_us) if filtered_us > 0 else 0
-                    srrn = f"{freq:.1f}"
                     row = NuanicExportLogRow(
                         address=state.mac,
                         time_unix=ts_unix,
                         time=ts_str,
                         dne=dne_stress_index,
                         srl=srl_ohms,
-                        srrn=srrn,
+                        srrn="0.0",
                         eda=eda_value,
                     ).to_csv_row()
                     self._enqueue_log(state, row)
@@ -530,12 +437,7 @@ class NuanicMonitor:
                         payload_hex=data.hex(),
                         full_packet_hex=data.hex(),
                         decoded_fields="",
-                        D306_Observed_Hz=rate_tail[0],
-                        IMU_Observed_Hz=rate_tail[1],
-                        Rate_Target_Hz=rate_tail[2],
-                        Rate_Control_Status=rate_tail[3],
-                        Equalize_Mode=rate_tail[4],
-                        Equalize_WouldDrop=rate_tail[5],
+                        **rate_tail,
                     ).to_csv_row()
                     self._enqueue_log(state, row)
 
@@ -568,16 +470,11 @@ class NuanicMonitor:
                     Skin_Resistance_kOhm=f"{resistance_kohm:.4f}",
                     Skin_Conductance_uS=f"{conductance_us:.4f}",
                     MM_Filtered_uS=f"{filtered_us:.4f}",
-                    SCR_Frequency_Per_Min=f"{freq:.4f}",
-                    SCR_Amplitude=f"{amp:.4f}",
+                    SCR_Frequency_Per_Min="",
+                    SCR_Amplitude="",
                     MM_Arousal_Score=f"{state.arousal_score:.2f}",
                     MM_Calibrated="1",
-                    D306_Observed_Hz=rate_tail[0],
-                    IMU_Observed_Hz=rate_tail[1],
-                    Rate_Target_Hz=rate_tail[2],
-                    Rate_Control_Status=rate_tail[3],
-                    Equalize_Mode=rate_tail[4],
-                    Equalize_WouldDrop=rate_tail[5],
+                    **rate_tail,
                     marker_label="",
                     marker_source="",
                 ).to_csv_row()
@@ -605,7 +502,7 @@ class NuanicMonitor:
 
                 now = datetime.now()
                 state.last_seen = now
-                self._update_observed_hz(state, "imu", now)
+                update_observed_hz(state, "imu", now)
                 would_drop = self._equalize_decision(state, "imu")
 
                 if would_drop and self.equalize_mode == "enforce":
@@ -657,7 +554,7 @@ class NuanicMonitor:
                 state = self._ensure_device_state(mac)
                 state.last_seen = datetime.now()
                 state.state_count += 1
-                state_code = data[0] if len(data) >= 1 else None
+                state_code = parse_finger_state_packet(data).state_code
                 would_drop = False
                 ts_iso = datetime.now().isoformat(timespec="milliseconds")
                 elapsed_ms = int(self._elapsed_seconds() * 1000)
@@ -678,12 +575,7 @@ class NuanicMonitor:
                         payload_hex=data.hex(),
                         full_packet_hex=data.hex(),
                         decoded_fields="",
-                        D306_Observed_Hz=rate_tail[0],
-                        IMU_Observed_Hz=rate_tail[1],
-                        Rate_Target_Hz=rate_tail[2],
-                        Rate_Control_Status=rate_tail[3],
-                        Equalize_Mode=rate_tail[4],
-                        Equalize_WouldDrop=rate_tail[5],
+                        **rate_tail,
                     ).to_csv_row()
                     self._enqueue_log(state, row)
 
@@ -721,7 +613,7 @@ class NuanicMonitor:
                 state = self._ensure_device_state(mac)
                 now = datetime.now()
                 state.last_seen = now
-                self._update_observed_hz(state, "d306", now)
+                update_observed_hz(state, "d306", now)
                 would_drop = self._equalize_decision(state, "d306")
 
                 if would_drop and self.equalize_mode == "enforce":
@@ -733,36 +625,33 @@ class NuanicMonitor:
 
                 decoded: Dict[str, Any] = {"len": len(data)}
                 eda_str = ""
-                freq, amp = 0.0, 0.0
+                eda_ohm = 0
                 res_kohm, cond_us, filtered_us = 0.0, 0.0, 0.0
                 timestamp_ms = ""
 
-                if len(data) == 14:
-                    parsed_eda = parse_live_eda_packet(data)
-                    if parsed_eda:
-                        decoded = parsed_eda
-                        timestamp_ms = str(parsed_eda["timestamp_ms"])
-                        eda_ohm = parsed_eda["eda_ohm"]
-                        res_kohm = parsed_eda["resistance_kohm"]
-                        cond_us = parsed_eda["conductance_us"]
-                        eda_str = str(eda_ohm)
+                parsed_eda = parse_live_eda_packet(data) if len(data) == 14 else None
+                if parsed_eda:
+                    decoded = parsed_eda
+                    timestamp_ms = str(parsed_eda["timestamp_ms"])
+                    eda_ohm = parsed_eda["eda_ohm"]
+                    res_kohm = parsed_eda["resistance_kohm"]
+                    cond_us = parsed_eda["conductance_us"]
+                    eda_str = str(eda_ohm)
 
-                        state.raw_eda = eda_ohm
-                        filtered_us = (
-                            self._get_signal_conditioner(state).process(cond_us)
-                            if self.apply_filter
-                            else cond_us
-                        )
-                        state.filtered_us = filtered_us
-                        state.mm_filtered_us_wave.append(filtered_us)
-                        state.live_dna_index.append(state.live_eda_count)
-                        state.live_dna_word2.append(eda_ohm)
-                        state.dne_stress_index = 0
-                        state.dne_stress_index_wave.append(0.0)
-
-                        freq, amp = 0.0, 0.0
-                        state.arousal_score = 0.0
-                        state.mm_arousal_wave.append(0.0)
+                    state.raw_eda = eda_ohm
+                    filtered_us = (
+                        self._get_signal_conditioner(state).process(cond_us)
+                        if self.apply_filter
+                        else cond_us
+                    )
+                    state.filtered_us = filtered_us
+                    state.mm_filtered_us_wave.append(filtered_us)
+                    state.live_dna_index.append(state.live_eda_count)
+                    state.live_dna_word2.append(eda_ohm)
+                    state.dne_stress_index = 0
+                    state.dne_stress_index_wave.append(0.0)
+                    state.arousal_score = 0.0
+                    state.mm_arousal_wave.append(0.0)
 
                 ts_iso = now.isoformat(timespec="milliseconds")
                 elapsed_ms = int(self._elapsed_seconds() * 1000)
@@ -776,17 +665,14 @@ class NuanicMonitor:
                     else:
                         smoothed_ts = now
                     ts_unix, ts_str = self._nuanic_ts_fields(smoothed_ts)
-                    srl_ohms = int(eda_ohm) if len(data) == 14 else 0
-                    srrn = f"{freq:.1f}" if len(data) == 14 else "0.0"
-                    eda_val = int(eda_ohm) if len(data) == 14 else 0
                     row = NuanicExportLogRow(
                         address=state.mac,
                         time_unix=ts_unix,
                         time=ts_str,
                         dne=0,
-                        srl=srl_ohms,
-                        srrn=srrn,
-                        eda=eda_val,
+                        srl=int(eda_ohm),
+                        srrn="0.0",
+                        eda=int(eda_ohm),
                     ).to_csv_row()
                     self._enqueue_log(state, row)
                 else:
@@ -804,12 +690,7 @@ class NuanicMonitor:
                         payload_hex=data.hex(),
                         full_packet_hex=data.hex(),
                         decoded_fields=json.dumps(decoded),
-                        D306_Observed_Hz=rate_tail[0],
-                        IMU_Observed_Hz=rate_tail[1],
-                        Rate_Target_Hz=rate_tail[2],
-                        Rate_Control_Status=rate_tail[3],
-                        Equalize_Mode=rate_tail[4],
-                        Equalize_WouldDrop=rate_tail[5],
+                        **rate_tail,
                     ).to_csv_row()
                     self._enqueue_log(state, row)
 
@@ -839,23 +720,16 @@ class NuanicMonitor:
                         data_type="LIVE_EDA_COMPUTED",
                         Source_D306_Clock=str(timestamp_ms),
                         Source_D306_Context="",
-                        Skin_Resistance_kOhm=(
-                            f"{res_kohm:.4f}" if len(data) == 14 else ""
-                        ),
-                        Skin_Conductance_uS=f"{cond_us:.4f}" if len(data) == 14 else "",
-                        MM_Filtered_uS=f"{filtered_us:.4f}" if len(data) == 14 else "",
-                        SCR_Frequency_Per_Min=f"{freq:.4f}" if len(data) == 14 else "",
-                        SCR_Amplitude=f"{amp:.4f}" if len(data) == 14 else "",
+                        Skin_Resistance_kOhm=f"{res_kohm:.4f}" if parsed_eda else "",
+                        Skin_Conductance_uS=f"{cond_us:.4f}" if parsed_eda else "",
+                        MM_Filtered_uS=f"{filtered_us:.4f}" if parsed_eda else "",
+                        SCR_Frequency_Per_Min="",
+                        SCR_Amplitude="",
                         MM_Arousal_Score=(
-                            f"{state.arousal_score:.2f}" if len(data) == 14 else ""
+                            f"{state.arousal_score:.2f}" if parsed_eda else ""
                         ),
                         MM_Calibrated="1",
-                        D306_Observed_Hz=rate_tail[0],
-                        IMU_Observed_Hz=rate_tail[1],
-                        Rate_Target_Hz=rate_tail[2],
-                        Rate_Control_Status=rate_tail[3],
-                        Equalize_Mode=rate_tail[4],
-                        Equalize_WouldDrop=rate_tail[5],
+                        **rate_tail,
                         marker_label="",
                         marker_source="",
                     ).to_csv_row()
@@ -867,56 +741,28 @@ class NuanicMonitor:
         return _cb
 
     async def _subscribe_device_streams(self, mac: str) -> bool:
-        sub_imu = getattr(
-            self.connector, "subscribe_to_imu_motion", self.connector.subscribe_to_imu
-        )
-        sub_dne = getattr(
-            self.connector, "subscribe_to_live_dne", self.connector.subscribe_to_stress
-        )
-        sub_finger = getattr(
-            self.connector,
-            "subscribe_to_finger_state",
-            self.connector.subscribe_to_raw_eda,
-        )
-        sub_eda_ohms = getattr(
-            self.connector,
-            "subscribe_to_raw_eda_ohms",
-            self.connector.subscribe_to_live_eda,
-        )
         results = await asyncio.gather(
-            sub_imu(self._make_imu_callback(mac), address=mac),
-            sub_dne(self._make_stress_callback(mac), address=mac),
-            sub_finger(self._make_raw_eda_callback(mac), address=mac),
-            sub_eda_ohms(self._make_live_eda_callback(mac), address=mac),
+            self.connector.subscribe_to_imu_motion(
+                self._make_imu_callback(mac), address=mac
+            ),
+            self.connector.subscribe_to_live_dne(
+                self._make_stress_callback(mac), address=mac
+            ),
+            self.connector.subscribe_to_finger_state(
+                self._make_raw_eda_callback(mac), address=mac
+            ),
+            self.connector.subscribe_to_raw_eda_ohms(
+                self._make_live_eda_callback(mac), address=mac
+            ),
         )
         return all(results)
 
     async def _unsubscribe_device_streams(self, mac: str) -> None:
-        unsub_imu = getattr(
-            self.connector,
-            "unsubscribe_from_imu_motion",
-            self.connector.unsubscribe_from_imu,
-        )
-        unsub_dne = getattr(
-            self.connector,
-            "unsubscribe_from_live_dne",
-            self.connector.unsubscribe_from_stress,
-        )
-        unsub_finger = getattr(
-            self.connector,
-            "unsubscribe_from_finger_state",
-            self.connector.unsubscribe_from_raw_eda,
-        )
-        unsub_eda_ohms = getattr(
-            self.connector,
-            "unsubscribe_from_raw_eda_ohms",
-            self.connector.unsubscribe_from_live_eda,
-        )
         await asyncio.gather(
-            unsub_imu(address=mac),
-            unsub_dne(address=mac),
-            unsub_finger(address=mac),
-            unsub_eda_ohms(address=mac),
+            self.connector.unsubscribe_from_imu_motion(address=mac),
+            self.connector.unsubscribe_from_live_dne(address=mac),
+            self.connector.unsubscribe_from_finger_state(address=mac),
+            self.connector.unsubscribe_from_raw_eda_ohms(address=mac),
         )
 
     async def _warmup_sequence(self, mac: str, device: Any = None) -> None:
@@ -958,9 +804,9 @@ class NuanicMonitor:
             _log.info(
                 f"[RECOVERY] Connection failed for {mac}. Trying aggressive BT radio reset..."
             )
-            await self.connector._reset_bluetooth_radio()
+            await reset_bluetooth_radio()
             await asyncio.sleep(1.5)
-            discovered = await self.connector.discover_all_matching_rings(
+            discovered = await self.connector.scanner.discover_all_matching_rings(
                 include_device=True, stop_if_found=True
             )
             fresh_device = next(
@@ -1008,14 +854,6 @@ class NuanicMonitor:
                 address=mac,
             )
             state.rate_control_status = str(result.get("status", "unknown"))
-            detail_bits = []
-            if result.get("uuid"):
-                detail_bits.append(str(result["uuid"])[0:8])
-            if result.get("payload_hex"):
-                detail_bits.append(f"p={result['payload_hex']}")
-            if result.get("echo_hex"):
-                detail_bits.append(f"e={result['echo_hex']}")
-            state.rate_control_detail = " ".join(detail_bits)
             _log.info(
                 f"[INFO] {mac} Rate: {result.get('target_hz')}Hz | "
                 f"Stat: {result.get('status')} | "
@@ -1087,7 +925,7 @@ class NuanicMonitor:
         s_attempts = scan_attempts if scan_attempts is not None else 3
 
         discovered: List[Dict[str, Any]] = (
-            await self.connector.discover_all_matching_rings(
+            await self.connector.scanner.discover_all_matching_rings(
                 include_device=True,
                 scan_timeout=s_timeout,
                 attempts=s_attempts,
@@ -1101,10 +939,10 @@ class NuanicMonitor:
                 "[BT-RESET] No rings discovered and allow_reset_bt is enabled. "
                 "Resetting Bluetooth adapter to clear stale connections..."
             )
-            reset_ok = await self.connector._reset_bluetooth_radio()
+            reset_ok = await reset_bluetooth_radio()
             if reset_ok:
                 _log.info("[BT-RESET] Rescanning after adapter reset...")
-                discovered = await self.connector.discover_all_matching_rings(
+                discovered = await self.connector.scanner.discover_all_matching_rings(
                     include_device=True,
                     scan_timeout=s_timeout,
                     attempts=s_attempts,
@@ -1202,8 +1040,8 @@ class NuanicMonitor:
 
     async def _connection_health_loop(self) -> None:
         while self.running:
-            try:
-                for mac, state in list(self.device_states.items()):
+            for mac, state in list(self.device_states.items()):
+                try:
                     client = self.connector.get_client(mac)
                     is_connected = bool(
                         client and getattr(client, "is_connected", False)
@@ -1232,8 +1070,8 @@ class NuanicMonitor:
                     await self._unsubscribe_device_streams(mac)
                     await self.connector.disconnect(address=mac)
                     await self._connect_and_subscribe(mac)
-            except Exception:
-                _log.debug("Health-loop error for %s", mac, exc_info=True)
+                except Exception:
+                    _log.debug("Health-loop error for %s", mac, exc_info=True)
 
             await asyncio.sleep(1.0)
 
@@ -1257,8 +1095,6 @@ class NuanicMonitor:
         await self._drain_writers_and_report()
         self._write_session_manifest()
 
-    stop_monitoring = stop_multi
-
     def _write_session_manifest(self) -> Optional[Path]:
         """Generate scientific session provenance manifest if logging is enabled."""
         if not self.enable_logging:
@@ -1279,7 +1115,7 @@ class NuanicMonitor:
                 "csv_layout": self.csv_layout,
                 "participant_id": self.participant_id,
             }
-            manifest = generate_session_manifest(
+            generate_session_manifest(
                 session_dir=session_dir,
                 session_id=f"SessionDate_{self.session_timestamp}",
                 start_time=self.start_time,
@@ -1287,7 +1123,7 @@ class NuanicMonitor:
                 configuration=config,
                 device_states=self.device_states,
             )
-            manifest_path = session_dir / "session_manifest.json"
+            manifest_path = session_dir / MANIFEST_FILENAME
             _log.info("Session manifest generated: %s", manifest_path)
             return manifest_path
         except Exception as e:

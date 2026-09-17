@@ -59,19 +59,3 @@ def test_telemetry_submodule_imports():
 
     state = RingDeviceState(mac="AA:BB:CC:DD:EE:01")
     assert state.mac == "AA:BB:CC:DD:EE:01"
-
-
-def test_root_backward_compatibility_shims():
-    import nuanic_ring._scanner as legacy_scan
-    import nuanic_ring.connector as legacy_conn
-    import nuanic_ring.manifest as legacy_man
-    import nuanic_ring.ring_profiles as legacy_prof
-    import nuanic_ring.schemas as legacy_sch
-    import nuanic_ring.signal_processing as legacy_dsp
-    from nuanic_ring.core.connector import NuanicConnector
-    from nuanic_ring.core.scanner import RingScanner
-    from nuanic_ring.dsp.signal_processing import SignalConditioner
-
-    assert legacy_conn.NuanicConnector is NuanicConnector
-    assert legacy_scan.RingScanner is RingScanner
-    assert legacy_dsp.SignalConditioner is SignalConditioner

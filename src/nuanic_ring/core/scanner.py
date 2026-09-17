@@ -182,49 +182,43 @@ class RingScanner:
         self.target_address = target_address
         self.pair_on_connect = pair_on_connect
 
-    async def find_device(self):
-        """Scan for Nuanic ring.
+    async def find_device(self, address: Optional[str] = None):
+        """Scan for a Nuanic ring. Returns the ``BLEDevice`` or ``None``.
 
-        If target_address is set, search for that specific device.
-        Returns the ``BLEDevice`` or ``None``.
+        With a known address ``find_device_by_address`` returns the moment the
+        ring advertises, instead of waiting out the whole ``discover`` window.
         """
-        max_attempts = self._compute_max_attempts()
-        timeout_per_attempt = max(2.5, self.timeout / max(1, max_attempts))
+        target = address or self.target_address
+        max_attempts = max(1, self.max_scan_attempts)
+        timeout_per_attempt = max(2.5, self.timeout / max_attempts)
+
         for attempt in range(1, max_attempts + 1):
             try:
-                devices = await BleakScanner.discover(timeout=timeout_per_attempt)
-
-                for device in devices:
-                    name = device.name or ""
-                    if not name or ("Nuanic" not in name and "Moodmetric" not in name):
-                        # Also check if MAC matches directly
-                        if (
-                            self.target_address
-                            and device.address.lower() == self.target_address.lower()
-                        ):
-                            return device
-                        continue
-
-                    if self.target_address:
-                        if device.address.lower() == self.target_address.lower():
-                            return device
-                    else:
-                        return device
-
-                if attempt < max_attempts:
-                    await asyncio.sleep(0.5)
-
+                if target:
+                    device = await BleakScanner.find_device_by_address(
+                        target, timeout=timeout_per_attempt
+                    )
+                else:
+                    device = await self._find_any_ring(timeout_per_attempt)
+                if device:
+                    return device
             except asyncio.CancelledError:
                 raise
             except Exception:
-                if attempt < max_attempts:
-                    await asyncio.sleep(0.5)
+                pass
+
+            if attempt < max_attempts:
+                await asyncio.sleep(0.5)
 
         return None
 
-    def _compute_max_attempts(self) -> int:
-        """Use configured retries for both broad and targeted scans."""
-        return max(1, self.max_scan_attempts)
+    async def _find_any_ring(self, timeout: float):
+        """First ring seen in a broad scan, when no address is known."""
+        for device in await BleakScanner.discover(timeout=timeout):
+            name = device.name or ""
+            if "Nuanic" in name or "Moodmetric" in name:
+                return device
+        return None
 
     def _merge_scan_devices(
         self,

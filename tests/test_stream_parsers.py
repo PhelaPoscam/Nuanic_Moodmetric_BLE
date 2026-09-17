@@ -4,7 +4,7 @@ import struct
 
 import pytest
 
-from nuanic_ring.connector import NuanicConnector
+from nuanic_ring.core.connector import NuanicConnector
 from nuanic_ring.monitor import NuanicMonitor
 
 
@@ -57,8 +57,15 @@ def test_parse_d306_invalid_length():
     assert monitor._parse_d306_packet(b"toolongpayloadforpacket") is None
 
 
+from nuanic_ring.io.schemas import FingerStatePacket, LiveEdaPacket
+from nuanic_ring.telemetry.callbacks import (
+    parse_finger_state_packet,
+    parse_live_eda_packet,
+)
+
+
 def test_live_eda_unpacking_logic():
-    """Verify standard <HQI unpacking for 14-byte Live EDA packets."""
+    """Verify standard <HQI unpacking for 14-byte Live EDA packets via production parser."""
     boot_count = 12
     timestamp_ms = 1720000000000
     eda_ohm = 500000  # 500 kOhm -> 2 uS
@@ -66,12 +73,40 @@ def test_live_eda_unpacking_logic():
     payload = struct.pack("<HQI", boot_count, timestamp_ms, eda_ohm)
     assert len(payload) == 14
 
-    unpacked_boot, unpacked_ts, unpacked_ohm = struct.unpack("<HQI", payload)
-    assert unpacked_boot == boot_count
-    assert unpacked_ts == timestamp_ms
-    assert unpacked_ohm == eda_ohm
+    # Test dataclass schema parser
+    packet = LiveEdaPacket.from_bytes(payload)
+    assert packet is not None
+    assert packet.boot_count == boot_count
+    assert packet.timestamp_ms == timestamp_ms
+    assert packet.eda_raw_ohms == eda_ohm
 
-    res_kohm = unpacked_ohm / 1000.0
-    cond_us = 1000000.0 / unpacked_ohm
-    assert res_kohm == 500.0
-    assert cond_us == 2.0
+    # Test callback parser function
+    parsed = parse_live_eda_packet(payload)
+    assert parsed is not None
+    assert parsed["boot_count"] == boot_count
+    assert parsed["timestamp_ms"] == timestamp_ms
+    assert parsed["eda_ohm"] == eda_ohm
+    assert parsed["resistance_kohm"] == 500.0
+    assert parsed["conductance_us"] == 2.0
+
+
+def test_live_eda_invalid_length():
+    """Verify Live EDA parsing rejects payloads of wrong length."""
+    assert parse_live_eda_packet(b"\x00" * 13) is None
+    assert parse_live_eda_packet(b"\x00" * 15) is None
+    assert LiveEdaPacket.from_bytes(b"") is None
+
+
+def test_finger_state_parsing():
+    """Verify finger state packet decoding (UUID 3c180fcc...)."""
+    off_finger = parse_finger_state_packet(b"\x01")
+    assert off_finger.state_code == 1
+    assert off_finger.payload_hex == "01"
+
+    on_finger = parse_finger_state_packet(b"\x02")
+    assert on_finger.state_code == 2
+    assert on_finger.payload_hex == "02"
+
+    empty = parse_finger_state_packet(b"")
+    assert empty.state_code is None
+    assert empty.payload_hex == ""

@@ -28,7 +28,11 @@ class SignalConditioner:
 
         # Calculate Nyquist frequency and normalized cutoff
         nyq = 0.5 * sample_rate
-        normal_cutoff = cutoff_hz / nyq
+        if nyq <= 0:
+            raise ValueError("sample_rate must be positive")
+        # Ensure normalized cutoff is strictly in (0, 1) to prevent Nyquist violation
+        safe_cutoff = min(cutoff_hz, nyq * 0.9) if cutoff_hz >= nyq else cutoff_hz
+        normal_cutoff = max(1e-4, min(0.99, safe_cutoff / nyq))
 
         # Create a 2nd-order Butterworth low-pass filter
         self.b, self.a = signal.butter(2, normal_cutoff, btype="low", analog=False)

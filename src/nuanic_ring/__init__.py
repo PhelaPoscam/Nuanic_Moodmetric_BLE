@@ -1,6 +1,6 @@
 """Nuanic Ring SDK: Bluetooth Low Energy data extraction and real-time monitoring."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from nuanic_ring.core.connector import NuanicConnector
 from nuanic_ring.core.profiles import (

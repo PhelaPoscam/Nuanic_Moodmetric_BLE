@@ -16,15 +16,15 @@ Files are organized into session folders and named using the following pattern:
 ```
 *Example:* `data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs/ring-72F207.csv`
 
-The monitor supports three CSV layouts:
+Every session writes four files per ring:
 
-- `--csv-layout combined` writes the legacy mixed CSV shown below (IMU rows are no longer written here).
-- `--csv-layout split` writes two files per ring:
-  - `..._streamed.csv`: only ring-native fields plus raw payloads and marker rows.
-  - `..._computed.csv`: locally computed physiology, motion, calibration, and rate diagnostics plus marker rows.
-- `--csv-layout both` writes the legacy combined CSV and the two split files.
+- `....csv`: the mixed combined CSV shown below (IMU rows are not written here).
+- `..._streamed.csv`: only ring-native fields plus raw payloads and marker rows.
+- `..._computed.csv`: locally computed physiology, motion, calibration, and rate diagnostics plus marker rows.
+- `..._imu.csv`: the dedicated IMU stream.
 
-> **Note:** IMU data is always written to a separate, dedicated `..._imu.csv` file, regardless of the `csv_layout` choice.
+Passing `--nuanic-export` replaces the combined CSV with the 7-column Nuanic
+Cloud export format; the other three files are unaffected.
 
 ---
 
@@ -58,7 +58,7 @@ The main streaming CSV contains a fixed set of **19 columns**. Because the ring 
 
 ## 📋 Streamed CSV Column Reference (`..._streamed.csv`)
 
-When using `--csv-layout split` or `both`, the streamed CSV contains **15 columns** of raw ring-native fields.
+The streamed CSV contains **15 columns** of raw ring-native fields.
 
 | # | Column Name | Data Type | Description |
 | :--- | :--- | :--- | :--- |
@@ -82,7 +82,7 @@ When using `--csv-layout split` or `both`, the streamed CSV contains **15 column
 
 ## 📋 Computed CSV Column Reference (`..._computed.csv`)
 
-When using `--csv-layout split` or `both`, the computed CSV contains **22 columns** with locally derived physiology and motion metrics.
+The computed CSV contains **22 columns** with locally derived physiology and motion metrics.
 
 | # | Column Name | Data Type | Description |
 | :--- | :--- | :--- | :--- |
@@ -128,7 +128,7 @@ This is the primary physiological stream (~16 Hz). It provides raw skin impedanc
   * Diagnostics: `D306_Observed_Hz`, `IMU_Observed_Hz`, `Rate_Target_Hz`, `Rate_Control_Status`, `Equalize_Mode`, `Equalize_WouldDrop`
 
 ### 2. Computed Physiology CSV (`..._computed.csv`)
-This file is generated automatically alongside the streaming file if you use `--csv-layout split` or `both`. It contains the offline physiological calculations, derived metrics, and the arousal score.
+This file is generated automatically alongside the streaming file. It contains the offline physiological calculations, derived metrics, and the arousal score.
 
 * **File Pattern:** `<log_dir>/SessionDate_DD-MM-YYYY_HH-MM-SS/csvs/[ParticipantID_]ring-<Last6MAC>_computed.csv`
 * **Columns:**
@@ -214,14 +214,13 @@ $$\text{IMU\_Motion\_Intensity} = \sigma(\text{Magnitude}_{1..14})$$
 
 ### Loading the Data in Python
 
-Choose the files that match your `--csv-layout` setting:
+All of these files are written for every session:
 
 ```python
 import pandas as pd
 
 SESSION = "data/ring_logs/SessionDate_08-06-2026_10-54-28/csvs"
 
-# --- With --csv-layout split or both ---
 
 # Physiology (derived metrics: skin conductance, arousal)
 computed_df = pd.read_csv(f"{SESSION}/ring-72F207_computed.csv")
@@ -231,7 +230,6 @@ eda_df = computed_df[computed_df["data_type"] == "D306_EDA_COMPUTED"]
 stream_df = pd.read_csv(f"{SESSION}/ring-72F207_streamed.csv")
 markers_df = stream_df[stream_df["data_type"] == "MARKER"]
 
-# --- With --csv-layout combined ---
 
 # Single mixed file (raw hardware + rate diagnostics; no computed physiology)
 combined_df = pd.read_csv(f"{SESSION}/ring-72F207.csv")

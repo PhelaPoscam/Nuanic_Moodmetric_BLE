@@ -125,7 +125,7 @@ nuanic-ring-monitor --mode standby    # Physiology OFF
 For phasic analysis (SCR detection, onset latency, amplitude):
 
 - Use `MODE_RAW_EDA` (default) — `MODE_LIVE` / `MODE_RESEARCH` return a firmware-preprocessed "instant" indicator, not raw Ohms.
-- The default `nuanic-ring-monitor` does NOT apply any host-side filter. Pass `--filter` to opt in to the median + 1.5 Hz Butterworth lowpass. (`--raw` is deprecated and ignored — it was the old way to bypass the filter, which is now the default.)
+- The default `nuanic-ring-monitor` does NOT apply any host-side filter. Pass `--filter` to opt in to the median + 1.5 Hz Butterworth lowpass.
 - Hardware ceiling: max sample rate is **16 Hz** — adequate for SCR amplitude and latency, marginal for fast waveform morphology.
 - The onboard DNE score is a tonic-level measure, not phasic. It does not show individual SCR events.
 

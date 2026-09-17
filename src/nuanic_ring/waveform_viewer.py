@@ -69,7 +69,7 @@ def _run_plot_blocking(
 
     By keeping matplotlib off the asyncio event loop we avoid the
     heisenbugs that come from mixing GUI event loops with async I/O.
-    Shared state is protected by ``viewer.state.lock``.
+    Shared state is unlocked; see the module docstring for why.
     """
     plt.style.use("dark_background")
     plt.ioff()
@@ -153,11 +153,7 @@ def _run_plot_blocking(
                 arousal_y = list(state.dne_stress_index_wave)[-max_points:]
                 w2_raw = list(state.live_dna_word2)[-max_points:]
 
-                live_dna_packets = (
-                    state.d306_count
-                    if hasattr(state, "d306_count") and state.d306_count > 0
-                    else getattr(state, "live_eda_count", 0)
-                )
+                live_dna_packets = state.d306_count or state.live_eda_count
                 imu_packets = state.imu_batch_count
             else:
                 dna_x, imu_x, imu_y, eda_y, arousal_y, w2_raw = [], [], [], [], [], []

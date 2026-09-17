@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import struct
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from nuanic_ring.io.schemas import (
     D306Packet,
