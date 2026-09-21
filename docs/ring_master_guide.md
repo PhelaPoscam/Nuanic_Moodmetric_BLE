@@ -198,6 +198,9 @@ nuanic-ring-monitor --shipping-mode --ring-addr AA:BB:CC:DD:EE:FF
 ## Troubleshooting
 
 - If connect fails with stale Windows BLE state, retry with `--reset-bt`.
+- If connect fails with `TimeoutError`, raise `--connect-timeout`. Linking a bonded ring routinely takes longer than a scan window (measured >9s under load), and the link budget is deliberately separate from `--scan-timeout`.
+- If the ring connects but streams no data at all, check `STATE_UUID`: the physiological streams are wear-gated and an off-finger ring (`1`) emits nothing, not even IMU.
+- After any mode change, expect ~60s of silence — all streams are muted during the mandatory calibration window. Re-writing the mode the ring already holds is a no-op and does not restart it.
 - Prefer `--target-hz 16` for multi-ring stability unless intentionally stress-testing.
 - Use `--scan-attempts` and `--scan-timeout` to improve discovery reliability in noisy environments.
 - If logs look empty at startup, remember logging is lazy-started after first payload.
@@ -244,6 +247,7 @@ nuanic-ring-monitor --shipping-mode --ring-addr AA:BB:CC:DD:EE:FF
 | `--reset-bt` | Aggressively reset Windows BT radio on initial failure. | False |
 | `--scan-timeout` | Timeout per scan attempt. | 6.0s |
 | `--scan-attempts` | Number of scan attempts before giving up. | 3 |
+| `--connect-timeout` | Seconds allowed for each GATT link attempt, independent of the scan budget. Raise it if connects fail with `TimeoutError`. | 20.0s |
 | `--discover` | Full GATT service discovery and characteristics dump. | - |
 | `--subscribe-streams` | [with `--discover`] Subscribe to ring notify streams and print live data. | False |
 | `--listen-seconds` | [with `--discover --subscribe-streams`] Duration in seconds (default: until Ctrl+C). | None |
@@ -264,7 +268,7 @@ The verified GATT characteristic meanings are:
 |---|---|---|---|
 | `5491faaf-b0c2-4167-8f3d-bc6b31db69e7` | **Nuanic Service** | `NUANIC_SERVICE_UUID` | Proprietary GATT Service for Nuanic / Moodmetric rings |
 | `3c180fcc-bfec-4b7c-8e52-1a37f123e449` | **State** | `STATE_UUID` | Read/Notify state indicator: `0`: Init, `1`: Off finger, `2`: On finger, `3`: Docked |
-| `516b0fb6-d861-4619-9dd0-0105e8b85128` | **Sample rate** | `SAMPLE_RATE_UUID` (`CONFIG_1`) | Read/Write sample rate: any of `3, 4, 6, 8, 12, 16` as `uint8_t` |
+| `516b0fb6-d861-4619-9dd0-0105e8b85128` | **Sample rate** | `SAMPLE_RATE_UUID` (`CONFIG_1`) | Read/Write sample rate (`uint8_t`). The firmware honours the exact value written — `3, 4, 6, 8, 12, 16` are the documented set, and `10` / `15` were verified to stream at exactly the requested rate. SDK clamps to `3-16`. |
 | `dc9c31a7-fbd3-467a-8777-10900c423d3b` | **Realtime** | `REALTIME_UUID` (`CONFIG_2`) | Write device time: Unix timestamp in ms (`uint64_t` LE, `<Q`) |
 | `d306262b-c8c9-4c4b-9050-3a41dea706e5` | **Live DNE** | `LIVE_DNE_UUID` / `LIVE_DNA_UUID` | Notify/Read 16 bytes (`<Qii`): `{uint64_t timestamp; int32_t instant; int32_t dne;}` |
 | `42dcb71b-1817-43bd-8ea3-7272780a1c9f` | **Live EDA** | `LIVE_EDA_UUID` / `ALGO_1MIN_UUID` | Notify 14 bytes (`<HQI`): `{uint16_t boot_count; uint64_t timestamp; uint32_t eda_ohm;}` |

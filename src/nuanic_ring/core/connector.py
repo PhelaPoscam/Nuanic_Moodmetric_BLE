@@ -79,6 +79,7 @@ class NuanicConnector:
         unpair_on_disconnect: bool = False,
         pair_on_connect: bool = True,
         auto_sync_time: bool = True,
+        connect_timeout: float = 20.0,
     ) -> None:
         self.max_connect_attempts = max_connect_attempts
         self.connect_backoff_seconds = connect_backoff_seconds
@@ -86,6 +87,12 @@ class NuanicConnector:
         self.unpair_on_disconnect = unpair_on_disconnect
         self.pair_on_connect = pair_on_connect
         self.auto_sync_time = auto_sync_time
+        # ``timeout`` sizes BLE *scans*; ``connect_timeout`` sizes the GATT link
+        # attempt. Both used to be the single ``timeout`` value, so a bonded ring
+        # needing longer than a scan window to come up failed with a bare
+        # TimeoutError from bleak (measured at >9s on a busy Windows radio).
+        # Scans stay short; only the link gets the long budget.
+        self.connect_timeout = connect_timeout
         self.client: Optional[BleakClient] = None
         self.device: Optional[Any] = None
         self._disconnect_event = asyncio.Event()
@@ -195,10 +202,15 @@ class NuanicConnector:
         return _cb
 
     def _create_bleak_client(self, target, disconnected_callback=None):
-        """Create BleakClient. ``pair=`` makes bleak pair during ``connect()``."""
+        """Create BleakClient. ``pair=`` makes bleak pair during ``connect()``.
+
+        The client timeout is the GATT *link* budget (``connect_timeout``), not
+        the scan timeout: linking to a bonded ring can take several times longer
+        than a scan window.
+        """
         return BleakClient(
             target,
-            timeout=self.scanner.timeout,
+            timeout=self.connect_timeout,
             disconnected_callback=disconnected_callback,
             pair=self.pair_on_connect,
         )
@@ -707,29 +719,66 @@ class NuanicConnector:
     # ── Mode & sample-rate control ──────────────────────────────────
 
     async def set_mode(self, mode: int, address: Optional[str] = None) -> bool:
-        """Switch the ring's operational mode."""
+        """Switch the ring's operational mode.
+
+        Writing the mode the ring already holds is a firmware no-op (no
+        recalibration), so CONFIG_3 is read first and the write is skipped when
+        it would change nothing. Without that check the log announced
+        "60s calibration begins" on every call, including no-ops, which made a
+        real mode transition indistinguishable from a redundant write.
+        """
         client = self._require_client(address)
         if not client:
             _log.warning("set_mode: not connected")
             return False
+        desired = mode & 0xFF
+        label = self.MODE_LABELS.get(desired, "unknown")
         try:
-            await client.write_gatt_char(self.STORAGE_FORMAT_UUID, bytes([mode & 0xFF]))
-            label = self.MODE_LABELS.get(mode & 0xFF, "unknown")
-            _log.info(
-                "set_mode: 0x%02X (%s) — 60s calibration begins", mode & 0xFF, label
-            )
+            current: Optional[int] = None
+            try:
+                raw = await client.read_gatt_char(self.STORAGE_FORMAT_UUID)
+                if raw:
+                    current = raw[0]
+            except Exception:
+                # Best effort: if the register cannot be read, fall through to
+                # the write rather than failing the mode change outright.
+                pass
+
+            if current == desired:
+                _log.info(
+                    "set_mode: already 0x%02X (%s) — no change, no recalibration",
+                    desired,
+                    label,
+                )
+                return True
+
+            await client.write_gatt_char(self.STORAGE_FORMAT_UUID, bytes([desired]))
+            _log.info("set_mode: 0x%02X (%s) — 60s calibration begins", desired, label)
             return True
         except Exception as exc:
-            _log.error("set_mode(0x%02X) failed: %s", mode & 0xFF, exc)
+            _log.error("set_mode(0x%02X) failed: %s", desired, exc)
             return False
 
     async def set_sample_rate(self, hz: int, address: Optional[str] = None) -> bool:
-        """Set the physiological stream sample rate via CONFIG_1."""
+        """Set the physiological stream sample rate via CONFIG_1.
+
+        The firmware streams at the exact value written; the ``3, 4, 6, 8, 12,
+        16`` set is the vendor-documented list rather than an enforced
+        whitelist, so intermediate rates such as ``10`` or ``15`` work too.
+        """
         client = self._require_client(address)
         if not client:
             _log.warning("set_sample_rate: not connected")
             return False
-        hz = max(3, min(16, int(hz)))
+        requested = int(hz)
+        hz = max(3, min(16, requested))
+        if hz != requested:
+            _log.warning(
+                "set_sample_rate: %d Hz is outside the supported 3-16 Hz range, "
+                "clamping to %d Hz",
+                requested,
+                hz,
+            )
         try:
             await client.write_gatt_char(self.SAMPLE_RATE_UUID, bytes([hz]))
             _log.info("set_sample_rate: %d Hz", hz)

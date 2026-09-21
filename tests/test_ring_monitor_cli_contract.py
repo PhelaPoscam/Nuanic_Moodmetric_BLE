@@ -13,6 +13,7 @@ def test_cli_defaults_match_documented_values():
     assert args.nuanic_export is False
     assert args.scan_timeout == 6.0
     assert args.scan_attempts == 3
+    assert args.connect_timeout == 20.0
     assert args.warmup_delay == 3.0
     assert args.markers is False
 

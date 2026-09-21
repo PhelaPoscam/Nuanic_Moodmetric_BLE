@@ -181,3 +181,81 @@ def test_stop_all_notifications_best_effort():
     assert conn.IMU_BATCH_UUID in stopped
     assert conn.STATE_UUID in stopped
     assert conn.LIVE_EDA_UUID in stopped
+
+
+class FakeGattClient:
+    """Client exposing a readable/writable CONFIG_3 register."""
+
+    def __init__(self, register_value=None):
+        self.is_connected = True
+        self.writes = []
+        self._register = register_value
+
+    async def read_gatt_char(self, uuid):
+        if self._register is None:
+            raise OSError("register not readable")
+        return bytes([self._register])
+
+    async def write_gatt_char(self, uuid, data):
+        self.writes.append((str(uuid).lower(), bytes(data)))
+        self._register = data[0]
+
+
+def _record_client_kwargs(monkeypatch):
+    captured = {}
+
+    class _RecordingBleakClient:
+        def __init__(self, target, **kwargs):
+            captured.clear()
+            captured.update(kwargs)
+
+    monkeypatch.setattr(connector_module, "BleakClient", _RecordingBleakClient)
+    return captured
+
+
+def test_bleak_client_uses_connect_timeout_not_scan_timeout(monkeypatch):
+    """The GATT link budget must be independent of the (short) scan budget."""
+    captured = _record_client_kwargs(monkeypatch)
+
+    conn = _make_connector(timeout=7.0, connect_timeout=20.0)
+    conn._create_bleak_client("AA:BB:CC:DD:EE:01")
+
+    assert captured["timeout"] == 20.0
+    assert conn.scanner.timeout == 7.0
+
+
+def test_connect_timeout_is_configurable(monkeypatch):
+    captured = _record_client_kwargs(monkeypatch)
+
+    _make_connector(connect_timeout=33.0)._create_bleak_client("AA:BB:CC:DD:EE:01")
+
+    assert captured["timeout"] == 33.0
+
+
+def test_set_mode_skips_write_when_already_in_mode():
+    """Writing the current mode re-triggers a 60s calibration on the ring."""
+    conn = _make_connector()
+    client = FakeGattClient(register_value=0x01)
+    conn.client = client
+
+    assert asyncio.run(conn.set_mode(0x01)) is True
+    assert client.writes == []
+
+
+def test_set_mode_writes_on_real_transition():
+    conn = _make_connector()
+    client = FakeGattClient(register_value=0x00)
+    conn.client = client
+
+    assert asyncio.run(conn.set_mode(0x01)) is True
+    assert client.writes == [(conn.STORAGE_FORMAT_UUID.lower(), bytes([0x01]))]
+
+
+def test_set_mode_still_writes_when_register_unreadable():
+    """An unreadable register must not block a legitimate mode change."""
+    conn = _make_connector()
+    client = FakeGattClient(register_value=None)
+    conn.client = client
+
+    assert asyncio.run(conn.set_mode(0x02)) is True
+    assert client.writes == [(conn.STORAGE_FORMAT_UUID.lower(), bytes([0x02]))]

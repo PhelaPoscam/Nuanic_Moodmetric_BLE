@@ -63,6 +63,7 @@ class NuanicMonitor:
         use_warmup: bool = False,
         warmup_delay: float = 1.0,
         force_hz: bool = False,
+        connect_timeout: float = 20.0,
     ) -> None:
         self.log_dir = Path(log_dir)
         self.enable_logging = enable_logging
@@ -76,7 +77,7 @@ class NuanicMonitor:
         self.warmup_delay = warmup_delay
         self.force_hz = force_hz
 
-        self.connector = NuanicConnector()
+        self.connector = NuanicConnector(connect_timeout=connect_timeout)
         self.apply_filter = apply_filter
         self.initial_mode = initial_mode
 

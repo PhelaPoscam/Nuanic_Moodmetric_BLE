@@ -150,7 +150,7 @@ Experimentally tested with `scripts/probe_flash_storage.py` (3-minute dual-mode 
 
 ### 📝 Configuration Characteristics (Empirically Mapped & Verified)
 
-1. **`516b0fb6-d861-4619-9dd0-0105e8b85128`** (`CONFIG_1` / `Sample rate`) - **Sample Rate Register** (read, write). Accepted values: any of `3, 4, 6, 8, 12, 16` as `uint8_t`.
+1. **`516b0fb6-d861-4619-9dd0-0105e8b85128`** (`CONFIG_1` / `Sample rate`) - **Sample Rate Register** (read, write). Written as a `uint8_t`. The firmware streams at the exact value written and does **not** enforce a whitelist — the `3, 4, 6, 8, 12, 16` set widely quoted as "accepted values" is only the vendor-documented list. Verified stream rates matched the register exactly at `10` (10.0 Hz), `12` (12.0 Hz), `15` (15.1 Hz) and `16` (16.0 Hz). Values outside `3-16` are rejected by SDK-side clamping in `set_sample_rate()`, and the register itself stores any byte without validating it.
 2. **`dc9c31a7-fbd3-467a-8777-10900c423d3b`** (`CONFIG_2` / `Realtime`) - **Time Synchronization Register** (write). Sets device time. Must give real absolute time after each boot (Unix timestamp in milliseconds as `uint64_t` LE), otherwise timestamps start from 1970.
 3. **`3cce21a7-e602-4e02-8c52-1e0366c1c846`** (`CONFIG_3` / `Storage format`) - **Storage Format / Mode Switch Register** (read, write). Accepted values (`uint8_t`): `0` = No data saved (Standby), `1` = Raw EDA signal saved, `2` = Nuanic algorithm results saved.
 4. **`2175c13f-60e4-4de5-80af-0d06f1b54880`** (`WRITE_1` / `Storage rewind`) - **Storage Rewind Command** (write). Rewinds internal storage for development testing. Struct: `{uint16_t boot_count; uint64_t timestamp;}`.
@@ -168,6 +168,8 @@ Experimentally tested with `scripts/probe_flash_storage.py` (3-minute dual-mode 
 | **Low-power idle** | `0x00` (Standby) | — | IMU + finger detection still active for wake-on-wear |
 
 > **Always account for the 60-second calibration window** after any mode transition before recording study data.
+
+> **Measure stream rates only while the ring reports on-finger** (`STATE_UUID` = `0x02`). The physiological streams are wear-gated: off-finger the ring emits nothing at all, not even IMU. A rate sweep that ignores finger state records 0 Hz and wrongly blames the rate register. Poll `STATE_UUID` and accumulate on-finger time only.
 - **SDK Usage:**
   ```python
   from nuanic_ring import NuanicConnector, MODE_LIVE, MODE_RESEARCH, MODE_RAW_EDA, MODE_STANDBY

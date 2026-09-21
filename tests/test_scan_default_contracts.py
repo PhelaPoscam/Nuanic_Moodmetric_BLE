@@ -29,6 +29,9 @@ def test_new_parameters_and_defaults_contracts():
     init_sig = inspect.signature(NuanicConnector.__init__)
     assert init_sig.parameters["timeout"].default == 7.0
 
+    # 2. GATT link budget is separate from, and longer than, the scan budget
+    assert init_sig.parameters["connect_timeout"].default == 20.0
+
     # 2. list_available_rings new defaults
     list_sig = inspect.signature(RingScanner.list_available_rings)
     assert list_sig.parameters["stop_if_found"].default is True

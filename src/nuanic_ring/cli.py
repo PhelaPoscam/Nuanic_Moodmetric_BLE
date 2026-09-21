@@ -319,6 +319,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scan-timeout", type=float, default=6.0)
     parser.add_argument("--scan-attempts", type=int, default=3)
     parser.add_argument(
+        "--connect-timeout",
+        type=float,
+        default=20.0,
+        help=(
+            "Seconds allowed for each GATT link attempt (default: 20.0). "
+            "Independent of --scan-timeout: a bonded ring can take far longer "
+            "to link than a scan window lasts."
+        ),
+    )
+    parser.add_argument(
         "--mode",
         choices=["live", "research", "raw_eda", "standby"],
         default="raw_eda",
@@ -417,7 +427,9 @@ async def _execute_maintenance(
 async def _run_maintenance_commands(args: argparse.Namespace, console: Any) -> int:
     """Handle one-off device maintenance commands (flash check, time sync, etc.)."""
     connector = NuanicConnector(
-        target_address=args.ring_addr, auto_sync_time=not args.sync_time
+        target_address=args.ring_addr,
+        auto_sync_time=not args.sync_time,
+        connect_timeout=args.connect_timeout,
     )
     if not await connector.connect():
         console.print("[red][FAIL] Could not connect to ring[/red]")
@@ -557,7 +569,9 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
     _warn_multi_ring_hz(console, args)
 
     if args.discover:
-        connector = NuanicConnector(target_address=args.ring_addr)
+        connector = NuanicConnector(
+            target_address=args.ring_addr, connect_timeout=args.connect_timeout
+        )
         if not await connector.connect():
             console.print("[red][FAIL] Could not connect to ring[/red]")
             return 1
@@ -618,6 +632,7 @@ async def _run_monitor_cli(args: argparse.Namespace) -> int:
         participant_id=args.participant_id,
         apply_filter=args.filter,
         initial_mode=_MODE_MAP[args.mode],
+        connect_timeout=args.connect_timeout,
     )
 
     started = await monitor.start_multi(
