@@ -1,0 +1,65 @@
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports (specialized test frameworks)
+.tox/
+.nox/
+nosetests.xml
+*.cover
+*.py,cover
+.hypothesis/
+cover/
+
+# Environments (project-specific)
+.env
+env.bak/
+venv.bak/
+
+# Project-specific: session data and recordings (never commit)
+data/
+
+# Analysis outputs (exploratory, never commit)
+analysis/
+
+# Project-specific scratch scripts and local dumps
+scratch/
+temp_patch.py
+tests_output.txt
+pytest_output.txt
+architecture_audit_and_roadmap.md
+diagnostic_capture_test.py
+
+# Pre-refactor source backup
+backup_nuanic/
+
+__pycache__/
+*.pyc
+
