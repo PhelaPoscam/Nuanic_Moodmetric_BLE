@@ -59,3 +59,7 @@ diagnostic_capture_test.py
 
 # Pre-refactor source backup
 backup_nuanic/
+
+__pycache__/
+*.pyc
+

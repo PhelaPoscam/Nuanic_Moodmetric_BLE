@@ -2,6 +2,7 @@
 
 __version__ = "0.4.0"
 
+from nuanic_ring.core.adapter import NuanicAdapter
 from nuanic_ring.core.connector import NuanicConnector
 from nuanic_ring.core.profiles import (
     MOODMETRIC_PROFILE,
@@ -33,6 +34,7 @@ MODE_RESEARCH = NuanicConnector.MODE_RESEARCH
 
 __all__ = [
     "__version__",
+    "NuanicAdapter",
     "NuanicConnector",
     "NuanicMonitor",
     "SignalConditioner",

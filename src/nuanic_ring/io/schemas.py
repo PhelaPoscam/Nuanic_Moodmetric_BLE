@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import statistics
 import struct
 from dataclasses import dataclass, fields
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
@@ -85,19 +87,20 @@ class ImuBatchPacket:
         sample_count = len(sample_bytes) // 6
 
         samples: List[Tuple[int, int, int]] = []
-        variances: List[float] = []
+        magnitudes: List[float] = []
 
         for i in range(sample_count):
             chunk = sample_bytes[i * 6 : (i + 1) * 6]
             if len(chunk) == 6:
                 x, y, z = struct.unpack("<hhh", chunk)
                 samples.append((x, y, z))
-                variances.append(float(x * x + y * y + z * z))
+                magnitudes.append(math.sqrt(x * x + y * y + z * z))
 
         if not samples:
             return None
 
-        motion_intensity = sum(variances) / len(variances) if variances else 0.0
+        # Spread of |a| across the batch: gravity is constant, so this is motion only.
+        motion_intensity = statistics.stdev(magnitudes) if len(magnitudes) > 1 else 0.0
         first_x, first_y, first_z = samples[0]
 
         return cls(
