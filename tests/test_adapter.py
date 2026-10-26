@@ -37,7 +37,11 @@ def _fake_connector(client):
 
 def test_parse_eda_packet_gives_one_shape_for_both_modes():
     raw = parse_eda_packet(struct.pack("<HQI", 12, 1690000000123, 45000))
-    assert (raw["clock"], raw["context"], raw["eda_value"]) == (12, 1690000000123, 45000)
+    assert (raw["clock"], raw["context"], raw["eda_value"]) == (
+        12,
+        1690000000123,
+        45000,
+    )
     assert raw["dne_stress_index"] == 0
 
     d306 = parse_eda_packet(struct.pack("<Qii", 1719999999000, 35000, 4))
