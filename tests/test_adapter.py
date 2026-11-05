@@ -135,3 +135,36 @@ async def test_watchdog_reconnects_on_packet_freeze_and_survives_bad_status_call
 
     assert adapter.connector.connect_device.await_count >= 2
     adapter.connector.disconnect.assert_any_await(address=MAC)
+
+
+@pytest.mark.asyncio
+async def test_watchdog_trusts_packets_over_a_dead_client_link():
+    """2026-11-05: Windows re-linked the ring and packets kept arriving while this
+    client reported no link. The watchdog must leave that stream alone and reset
+    its backoff, then reconnect once the packets really stop."""
+    client = SimpleNamespace(is_connected=True)
+    adapter = NuanicAdapter(
+        target_address=MAC,
+        watchdog_interval=0.1,
+        freeze_timeout=5.0,
+        reconnect_backoff=0.01,
+    )
+    adapter.connector = _fake_connector(client)
+    assert await adapter.connect() is True
+    client.is_connected = False
+    adapter._attempt = 5  # escalated by earlier drops
+
+    packet = bytearray(struct.pack("<HQI", 3, 1690000000123, 45000))
+    # 0.02 s sleeps: shorter ones can return at once on Windows' 15.6 ms clock.
+    for _ in range(40):  # several watchdog ticks while streaming
+        adapter._on_eda(None, packet)
+        await asyncio.sleep(0.02)
+    assert adapter.connector.connect_device.await_count == 1
+    assert adapter._attempt == 0
+
+    for _ in range(100):  # packets stopped: a real drop
+        if adapter.connector.connect_device.await_count >= 2:
+            break
+        await asyncio.sleep(0.02)
+    await adapter.disconnect()
+    assert adapter.connector.connect_device.await_count >= 2

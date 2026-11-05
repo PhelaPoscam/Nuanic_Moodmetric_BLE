@@ -85,6 +85,7 @@ class NuanicAdapter:
         )
         self.connected_mac: str = "-"
         self.last_packet_time = 0.0
+        self._packets = 0  # clock-free: Windows monotonic ticks every 15.6 ms
         self._attempt = 0
         self._running = False
         self._watchdog_task: Optional[asyncio.Task[None]] = None
@@ -158,24 +159,38 @@ class NuanicAdapter:
 
     def _on_eda(self, _sender: Any, data: bytearray) -> None:
         self.last_packet_time = time.monotonic()
+        self._packets += 1
         parsed = parse_eda_packet(bytes(data))
         if parsed and self.eda_callback:
             self.eda_callback(parsed)
 
     def _on_imu(self, _sender: Any, data: bytearray) -> None:
         self.last_packet_time = time.monotonic()
+        self._packets += 1
         parsed = parse_468f_imu_batch(bytes(data))
         if parsed and self.imu_callback:
             self.imu_callback(parsed)
 
+    def _healthy(self, packets_arrived: bool) -> bool:
+        """True while packets arrive, whatever this client's own link reports.
+
+        Windows re-links a bonded ring whose first notifications are still
+        registered, so packets can resume while this client reports no link.
+        Reconnecting then only scans for a ring that no longer advertises, and
+        the backoff, never reset, climbs to ``max_backoff`` (2026-11-05: 6 min
+        of futile scans while the ring streamed, then a 30 s wait before
+        retrying after each real drop). Without a link, act once a whole
+        watchdog interval passes with no packet.
+        """
+        if not self.is_connected:
+            return packets_arrived
+        return time.monotonic() - self.last_packet_time <= self.freeze_timeout
+
     async def _watchdog_loop(self) -> None:
         while self._running:
+            seen = self._packets
             await asyncio.sleep(self.watchdog_interval)
-            healthy = (
-                self.is_connected
-                and time.monotonic() - self.last_packet_time <= self.freeze_timeout
-            )
-            if healthy:
+            if self._healthy(self._packets != seen):
                 self._attempt = 0
             else:
                 await self._reconnect()
